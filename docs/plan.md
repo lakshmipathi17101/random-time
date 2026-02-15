@@ -26,35 +26,88 @@
 - [x] Permission handling for calendar and notifications
 - [x] Past-time graceful handling
 
-## Phase 3: Task Persistence & Management
-> Persist tasks and manage them in-app
+---
 
-- [ ] Persist tasks with AsyncStorage
-- [ ] Task list view (time + task pairs)
-- [ ] Edit / delete tasks
-- [ ] Mark tasks as done / postpone
-- [ ] Action buttons on notification: "Done" / "Postpone"
-- [ ] Postpone re-generates a new random time and reschedules
+## Phase 3: Task Persistence & Management (Complete)
+> SQLite persistence, dual notifications, task list
+
+- [x] expo-sqlite: tasks and settings tables (WAL mode)
+- [x] Tasks persisted: title, time, reminder ID, alarm ID, calendar event ID
+- [x] Settings persisted: 12h/24h toggle, time range
+- [x] Dual notifications: reminder X min before + alarm at exact event time
+- [x] Custom reminder minutes input alongside preset chips
+- [x] Saved Tasks list with delete (cancels scheduled notifications)
+- [x] Android: separate HIGH/MAX importance channels for reminders vs alarms
 
 ---
 
-## Phase 4: Alarms
-> Alarm-style alerts that require user interaction to dismiss
+## Phase 4: Task Enhancements (In Progress)
+> Richer task management and UX
 
-- [ ] Install and configure alarm capabilities
-- [ ] Full-screen alarm UI when time is reached
-- [ ] Sound/vibration on alarm trigger
-- [ ] Snooze / dismiss options
-- [ ] Recurring random alarms (daily, weekdays, custom)
+- [ ] Mark task as done (checkbox, visual strike-through, persist status)
+- [ ] Task notes/description (optional multi-line text on each task)
+- [ ] Date picker (create tasks for future dates, not just today)
+- [ ] Postpone task (reschedule to new random time, cancel old notifications)
+- [ ] Edit task (change title, date, time, reminder after saving)
+- [ ] Haptic feedback on generate and key interactions
+- [ ] Multiple reminders per task (e.g. 30 min + 10 min + 5 min before)
+- [ ] Task categories / tags (Work, Personal, Health, etc.)
+- [ ] Task priority (High / Medium / Low with colour indicator)
+- [ ] Search tasks (filter list by title)
+- [ ] Sort tasks (by time, date, priority, creation)
+- [ ] Filter tasks (by status: pending / done; by category; by date)
+- [ ] Bulk delete (select multiple tasks, delete all done / all past)
+- [ ] Multiple times at once (generate 3–5 random times in one tap)
 
 ---
 
-## Phase 5: Polish & Extras
-> UX improvements and additional features
+## Phase 5: Notifications & Alarms Advanced
+> Power notification and alarm features
 
-- [ ] Onboarding / tutorial screens
-- [ ] Settings screen (theme, sound, defaults)
-- [ ] Multiple time zones support
-- [ ] Widget for home screen (quick generate)
-- [ ] Export/share generated schedules
-- [ ] Dark/light theme toggle
+- [ ] Notification actions — tap "Done" or "Postpone" from the notification tray
+- [ ] Postpone from notification re-generates a new random time and reschedules
+- [ ] Recurring tasks (daily, weekdays, custom days)
+- [ ] Full-screen alarm UI when event time arrives (requires dev build)
+- [ ] Snooze alarm (delay by N minutes)
+- [ ] Sound selection (pick notification/alarm sound)
+- [ ] App icon badge showing count of upcoming tasks
+
+---
+
+## Phase 6: Settings & Sharing
+> User preferences and data portability
+
+- [ ] Settings screen (default reminder time, theme, time format, sound)
+- [ ] Dark/light theme toggle (user-selectable, persisted)
+- [ ] Share task (share generated time or task as text / calendar invite)
+- [ ] Export tasks as JSON (backup to Files app / Google Drive)
+- [ ] Statistics screen (tasks completed, streaks, average reminder time)
+
+---
+
+## Phase 7: Time Generation Advanced
+> More powerful random time options
+
+- [ ] Weighted random (bias toward certain hours, e.g. work hours 9–17)
+- [ ] Exclude time blocks (e.g. skip lunch 12–13, skip sleep 22–07)
+- [ ] Random duration generator (not just a fixed time)
+- [ ] Time zone support (generate in a chosen time zone)
+
+---
+
+## Phase 8: Calendar Intelligence
+> Smarter calendar integration
+
+- [ ] Read existing calendar events to avoid conflicts
+- [ ] Recurring calendar events (not just one-off)
+- [ ] Show calendar event acceptance/decline status in task list
+
+---
+
+## Phase 9: Polish & Platform
+> Platform-specific features and final polish
+
+- [ ] Onboarding screen (brief walkthrough on first launch)
+- [ ] Home screen widget for quick generate (requires Expo config plugin)
+- [ ] iPad / tablet layout
+- [ ] Accessibility (VoiceOver / TalkBack support)
