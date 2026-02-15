@@ -18,7 +18,9 @@ import {
 import {
   requestNotificationPermission,
   scheduleReminder,
+  scheduleAlarm,
 } from "./notificationService";
+import { insertTask } from "./db";
 
 const REMINDER_OPTIONS = [5, 10, 15, 30] as const;
 
@@ -28,6 +30,7 @@ interface AddEventModalProps {
   eventMinute: number;
   eventSecond: number;
   onClose: () => void;
+  onTaskSaved: () => void;
 }
 
 export default function AddEventModal({
@@ -36,10 +39,18 @@ export default function AddEventModal({
   eventMinute,
   eventSecond,
   onClose,
+  onTaskSaved,
 }: AddEventModalProps) {
   const [taskName, setTaskName] = useState("");
   const [reminderMin, setReminderMin] = useState(10);
+  const [customMinutes, setCustomMinutes] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const effectiveReminderMin: number = (() => {
+    const parsed = parseInt(customMinutes, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+    return reminderMin;
+  })();
 
   const handleSave = async () => {
     const name = taskName.trim();
@@ -47,11 +58,14 @@ export default function AddEventModal({
       Alert.alert("Missing task name", "Please enter a task name.");
       return;
     }
+    if (effectiveReminderMin <= 0) {
+      Alert.alert("Invalid reminder", "Enter a reminder time greater than 0.");
+      return;
+    }
 
     setSaving(true);
 
     try {
-      // Calendar permission + event
       const calGranted = await requestCalendarPermission();
       if (!calGranted) {
         Alert.alert(
@@ -72,30 +86,43 @@ export default function AddEventModal({
         eventSecond
       );
 
-      await createCalendarEvent(name, eventDate);
+      const calendarEventId = await createCalendarEvent(name, eventDate);
 
-      // Notification permission + reminder
       const notifGranted = await requestNotificationPermission();
+
+      let reminderId: string | null = null;
+      let alarmId: string | null = null;
+
+      if (notifGranted) {
+        reminderId = await scheduleReminder(name, eventDate, effectiveReminderMin);
+        alarmId = await scheduleAlarm(name, eventDate);
+      }
+
+      await insertTask({
+        title: name,
+        event_date: eventDate.toISOString(),
+        reminder_minutes: effectiveReminderMin,
+        alarm_notification_id: alarmId,
+        reminder_notification_id: reminderId,
+        calendar_event_id: calendarEventId,
+      });
+
+      onTaskSaved();
+
       if (!notifGranted) {
         Alert.alert(
           "Event created",
-          "Calendar event saved, but notification permission was denied. No reminder will fire."
+          "Calendar event saved. Notification permission was denied — no reminders will fire."
         );
-        resetAndClose();
-        return;
-      }
-
-      const reminderId = await scheduleReminder(name, eventDate, reminderMin);
-
-      if (reminderId) {
+      } else if (!reminderId && !alarmId) {
         Alert.alert(
-          "Saved",
-          `Event created and reminder set for ${reminderMin} min before.`
+          "Event created",
+          "Calendar event saved. The event time has already passed so no notifications were scheduled."
         );
       } else {
         Alert.alert(
-          "Event created",
-          `Calendar event saved, but the reminder time has already passed.`
+          "Saved",
+          `Event created with a ${effectiveReminderMin} min reminder and an alarm at the event time.`
         );
       }
 
@@ -111,6 +138,7 @@ export default function AddEventModal({
   const resetAndClose = () => {
     setTaskName("");
     setReminderMin(10);
+    setCustomMinutes("");
     onClose();
   };
 
@@ -145,13 +173,16 @@ export default function AddEventModal({
             {REMINDER_OPTIONS.map((min) => (
               <TouchableOpacity
                 key={min}
-                style={[styles.chip, reminderMin === min && styles.chipActive]}
-                onPress={() => setReminderMin(min)}
+                style={[styles.chip, reminderMin === min && !customMinutes && styles.chipActive]}
+                onPress={() => {
+                  setReminderMin(min);
+                  setCustomMinutes("");
+                }}
               >
                 <Text
                   style={[
                     styles.chipText,
-                    reminderMin === min && styles.chipTextActive,
+                    reminderMin === min && !customMinutes && styles.chipTextActive,
                   ]}
                 >
                   {min} min
@@ -159,6 +190,21 @@ export default function AddEventModal({
               </TouchableOpacity>
             ))}
           </View>
+
+          {/* Custom Minutes */}
+          <Text style={styles.labelSmall}>Or enter custom minutes</Text>
+          <TextInput
+            style={styles.textInputSmall}
+            keyboardType="number-pad"
+            placeholder="e.g. 45"
+            placeholderTextColor="#666680"
+            value={customMinutes}
+            onChangeText={(v) => {
+              setCustomMinutes(v);
+              setReminderMin(0);
+            }}
+            maxLength={4}
+          />
 
           {/* Buttons */}
           <View style={styles.buttonRow}>
@@ -217,6 +263,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginTop: 12,
   },
+  labelSmall: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#666680",
+    marginBottom: 6,
+    marginTop: 10,
+  },
   textInput: {
     backgroundColor: "#2a2a40",
     color: "#ffffff",
@@ -226,6 +279,16 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#3a3a55",
   },
+  textInputSmall: {
+    backgroundColor: "#2a2a40",
+    color: "#ffffff",
+    fontSize: 15,
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#3a3a55",
+    width: 100,
+  },
   chipRow: {
     flexDirection: "row",
     gap: 10,
@@ -233,7 +296,7 @@ const styles = StyleSheet.create({
   },
   chip: {
     paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderRadius: 20,
     backgroundColor: "#2a2a40",
     borderWidth: 1,
