@@ -20,6 +20,7 @@ import AddEventModal from "./AddEventModal";
 import {
   getDb,
   getTasks,
+  getDoneTasks,
   deleteTask,
   updateTaskStatus,
   updateTaskTime,
@@ -28,7 +29,7 @@ import {
   Task,
   TaskPriority,
 } from "./db";
-import { cancelNotification } from "./notificationService";
+import { cancelNotification, setupNotificationResponseHandler } from "./notificationService";
 
 const MAX_HISTORY = 10;
 
@@ -259,6 +260,8 @@ export default function App() {
   const [sortBy, setSortBy] = useState<"time" | "priority" | "created">("time");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [dbReady, setDbReady] = useState(false);
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const [defaultReminder, setDefaultReminder] = useState("10");
 
   const isMountedRef = useRef(false);
 
@@ -280,6 +283,7 @@ export default function App() {
       const savedMaxM = await getSetting("max_m");
       const savedMaxS = await getSetting("max_s");
 
+      const savedDefaultReminder = await getSetting("default_reminder");
       if (saved24h !== null) setIs24h(saved24h === "true");
       if (savedMinH !== null) setMinH(savedMinH);
       if (savedMinM !== null) setMinM(savedMinM);
@@ -287,6 +291,7 @@ export default function App() {
       if (savedMaxH !== null) setMaxH(savedMaxH);
       if (savedMaxM !== null) setMaxM(savedMaxM);
       if (savedMaxS !== null) setMaxS(savedMaxS);
+      if (savedDefaultReminder !== null) setDefaultReminder(savedDefaultReminder);
 
       await loadTasks();
 
@@ -296,6 +301,39 @@ export default function App() {
 
     init();
   }, [loadTasks]);
+
+  // Notification action handlers (Done / Postpone from tray)
+  useEffect(() => {
+    const cleanup = setupNotificationResponseHandler(
+      async (taskId) => {
+        await updateTaskStatus(taskId, "done");
+        await loadTasks();
+      },
+      async (taskId) => {
+        const task = (await getTasks()).find((t) => t.id === taskId);
+        if (!task) return;
+        const minTotal = timeToSeconds(
+          parseVal(minH, 23), parseVal(minM, 59), parseVal(minS, 59)
+        );
+        const maxTotal = timeToSeconds(
+          parseVal(maxH, 23), parseVal(maxM, 59), parseVal(maxS, 59)
+        );
+        const range = Math.max(maxTotal - minTotal, 0);
+        const randomTotal = Math.floor(Math.random() * (range + 1)) + minTotal;
+        const { h, m, s } = secondsToTime(randomTotal);
+        const orig = new Date(task.event_date);
+        const newDate = new Date(orig.getFullYear(), orig.getMonth(), orig.getDate(), h, m, s);
+        if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
+        if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
+        const { scheduleReminder, scheduleAlarm } = await import("./notificationService");
+        const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
+        const alarmId = await scheduleAlarm(task.title, newDate, task.id);
+        await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
+        await loadTasks();
+      }
+    );
+    return cleanup;
+  }, [loadTasks, minH, minM, minS, maxH, maxM, maxS]);
 
   // Persist format toggle
   useEffect(() => {
@@ -318,6 +356,12 @@ export default function App() {
     upsertSetting("max_m", maxM);
     upsertSetting("max_s", maxS);
   }, [maxH, maxM, maxS]);
+
+  // Persist default reminder
+  useEffect(() => {
+    if (!isMountedRef.current) return;
+    upsertSetting("default_reminder", defaultReminder);
+  }, [defaultReminder]);
 
   const parseVal = (v: string, max: number): number => {
     const n = parseInt(v, 10);
@@ -444,6 +488,33 @@ export default function App() {
     );
   }, [selectedIds, tasks, loadTasks]);
 
+  const handleDeleteAllDone = useCallback(() => {
+    Alert.alert(
+      "Delete All Done",
+      "Remove all completed tasks? Their notifications will be cancelled.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            const done = await getDoneTasks();
+            for (const task of done) {
+              if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
+              if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
+              if (task.reminder_notification_ids) {
+                const ids: string[] = JSON.parse(task.reminder_notification_ids);
+                for (const id of ids) await cancelNotification(id);
+              }
+              await deleteTask(task.id);
+            }
+            await loadTasks();
+          },
+        },
+      ]
+    );
+  }, [loadTasks]);
+
   const handleShareTask = useCallback((task: Task) => {
     const d = new Date(task.event_date);
     const dateStr = d.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
@@ -545,6 +616,36 @@ export default function App() {
         >
           <Text style={styles.title}>Random Time</Text>
           <Text style={styles.subtitle}>Generator</Text>
+
+          {/* Settings Panel */}
+          <TouchableOpacity
+            style={styles.settingsToggle}
+            onPress={() => setSettingsVisible((v) => !v)}
+          >
+            <Text style={styles.settingsToggleText}>
+              {settingsVisible ? "▲ Settings" : "▼ Settings"}
+            </Text>
+          </TouchableOpacity>
+          {settingsVisible && (
+            <View style={styles.settingsPanel}>
+              <Text style={styles.settingsSectionLabel}>Default Reminder (minutes)</Text>
+              <TextInput
+                style={styles.settingsInput}
+                keyboardType="number-pad"
+                maxLength={3}
+                value={defaultReminder}
+                onChangeText={setDefaultReminder}
+                placeholderTextColor="#666680"
+                placeholder="10"
+              />
+              <TouchableOpacity
+                style={styles.settingsDangerButton}
+                onPress={handleDeleteAllDone}
+              >
+                <Text style={styles.settingsDangerText}>Delete all done tasks</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Format Toggle */}
           <TouchableOpacity style={styles.toggleRow} onPress={toggleFormat}>
@@ -648,6 +749,7 @@ export default function App() {
             onClose={() => { setModalVisible(false); setEditingTask(undefined); }}
             onTaskSaved={loadTasks}
             editTask={editingTask}
+            defaultReminderMin={parseInt(defaultReminder, 10) || 10}
           />
 
           {/* History */}
@@ -1247,6 +1349,59 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: "center",
     marginTop: 12,
+  },
+  settingsToggle: {
+    alignSelf: "flex-end",
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#3a3a55",
+    marginBottom: 8,
+  },
+  settingsToggleText: {
+    color: "#8888aa",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  settingsPanel: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: "#1a1a2e",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    gap: 10,
+  },
+  settingsSectionLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#8888aa",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  settingsInput: {
+    backgroundColor: "#2a2a40",
+    color: "#ffffff",
+    fontSize: 15,
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#3a3a55",
+    width: 100,
+  },
+  settingsDangerButton: {
+    marginTop: 4,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#ff6b6b44",
+    alignItems: "center",
+  },
+  settingsDangerText: {
+    color: "#ff6b6b",
+    fontSize: 13,
+    fontWeight: "600",
   },
   statsContainer: {
     marginTop: 32,

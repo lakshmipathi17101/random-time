@@ -39,6 +39,7 @@ interface AddEventModalProps {
   onClose: () => void;
   onTaskSaved: () => void;
   editTask?: Task;
+  defaultReminderMin?: number;
 }
 
 export default function AddEventModal({
@@ -49,6 +50,7 @@ export default function AddEventModal({
   onClose,
   onTaskSaved,
   editTask,
+  defaultReminderMin = 10,
 }: AddEventModalProps) {
   const [taskName, setTaskName] = useState("");
   const [notes, setNotes] = useState("");
@@ -60,7 +62,7 @@ export default function AddEventModal({
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [category, setCategory] = useState<TaskCategory | null>(null);
   const [priority, setPriority] = useState<TaskPriority | null>(null);
-  const [selectedReminders, setSelectedReminders] = useState<number[]>([10]);
+  const [selectedReminders, setSelectedReminders] = useState<number[]>([defaultReminderMin]);
   const [customMinutes, setCustomMinutes] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -215,7 +217,7 @@ export default function AddEventModal({
     today.setHours(0, 0, 0, 0);
     setSelectedDate(today);
     setShowDatePicker(false);
-    setSelectedReminders([10]);
+    setSelectedReminders([defaultReminderMin]);
     setCustomMinutes("");
     setCategory(null);
     setPriority(null);

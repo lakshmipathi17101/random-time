@@ -27,7 +27,8 @@ export type SettingKey =
   | "min_s"
   | "max_h"
   | "max_m"
-  | "max_s";
+  | "max_s"
+  | "default_reminder";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 
@@ -173,6 +174,11 @@ export async function getTasks(): Promise<Task[]> {
 export async function deleteTask(id: number): Promise<void> {
   const db = await getDb();
   await db.runAsync(`DELETE FROM tasks WHERE id = ?`, id);
+}
+
+export async function getDoneTasks(): Promise<Task[]> {
+  const db = await getDb();
+  return db.getAllAsync<Task>(`SELECT * FROM tasks WHERE status = 'done'`);
 }
 
 export async function getSetting(key: SettingKey): Promise<string | null> {
