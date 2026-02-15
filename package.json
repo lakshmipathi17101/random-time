@@ -14,6 +14,7 @@
     "expo-calendar": "~15.0.8",
     "expo-clipboard": "~7.1.0",
     "expo-notifications": "~0.32.16",
+    "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~2.2.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",

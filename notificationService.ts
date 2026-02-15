@@ -24,6 +24,13 @@ export async function requestNotificationPermission(): Promise<boolean> {
       importance: Notifications.AndroidImportance.HIGH,
       sound: "default",
     });
+    await Notifications.setNotificationChannelAsync("alarms", {
+      name: "Task Alarms",
+      importance: Notifications.AndroidImportance.MAX,
+      sound: "default",
+      vibrationPattern: [0, 250, 250, 250],
+      enableVibrate: true,
+    });
   }
 
   return true;
@@ -37,10 +44,9 @@ export async function scheduleReminder(
   const triggerDate = new Date(
     eventDate.getTime() - minutesBefore * 60 * 1000
   );
-  const now = new Date();
 
-  if (triggerDate <= now) {
-    return null; // reminder time already passed
+  if (triggerDate <= new Date()) {
+    return null;
   }
 
   const id = await Notifications.scheduleNotificationAsync({
@@ -57,4 +63,32 @@ export async function scheduleReminder(
   });
 
   return id;
+}
+
+export async function scheduleAlarm(
+  title: string,
+  eventDate: Date
+): Promise<string | null> {
+  if (eventDate <= new Date()) {
+    return null;
+  }
+
+  const id = await Notifications.scheduleNotificationAsync({
+    content: {
+      title: "Time is now!",
+      body: `"${title}" — your random time has arrived.`,
+      sound: "default",
+      ...(Platform.OS === "android" && { channelId: "alarms" }),
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: eventDate,
+    },
+  });
+
+  return id;
+}
+
+export async function cancelNotification(id: string): Promise<void> {
+  await Notifications.cancelScheduledNotificationAsync(id);
 }

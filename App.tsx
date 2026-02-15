@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   StyleSheet,
   Text,
@@ -9,11 +9,21 @@ import {
   Platform,
   ScrollView,
   FlatList,
+  Alert,
 } from "react-native";
 import { SafeAreaView, SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import * as Clipboard from "expo-clipboard";
 import AddEventModal from "./AddEventModal";
+import {
+  getDb,
+  getTasks,
+  deleteTask,
+  getSetting,
+  upsertSetting,
+  Task,
+} from "./db";
+import { cancelNotification } from "./notificationService";
 
 const MAX_HISTORY = 10;
 
@@ -123,6 +133,37 @@ interface HistoryEntry {
   s: number;
 }
 
+interface TaskListItemProps {
+  task: Task;
+  is24h: boolean;
+  onDelete: (task: Task) => void;
+}
+
+function TaskListItem({ task, is24h, onDelete }: TaskListItemProps) {
+  const eventDate = new Date(task.event_date);
+  const h = eventDate.getHours();
+  const m = eventDate.getMinutes();
+  const s = eventDate.getSeconds();
+  const timeLabel = is24h ? formatTime24(h, m, s) : formatTime12(h, m, s);
+
+  return (
+    <View style={styles.taskItem}>
+      <View style={styles.taskInfo}>
+        <Text style={styles.taskTitle}>{task.title}</Text>
+        <Text style={styles.taskMeta}>
+          {timeLabel} · -{task.reminder_minutes} min reminder
+        </Text>
+      </View>
+      <TouchableOpacity
+        style={styles.taskDeleteButton}
+        onPress={() => onDelete(task)}
+      >
+        <Text style={styles.taskDeleteText}>Delete</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function App() {
   const [minH, setMinH] = useState("00");
   const [minM, setMinM] = useState("00");
@@ -138,6 +179,67 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [dbReady, setDbReady] = useState(false);
+
+  const isMountedRef = useRef(false);
+
+  const loadTasks = useCallback(async () => {
+    const fetched = await getTasks();
+    setTasks(fetched);
+  }, []);
+
+  // Initialize DB and load persisted settings
+  useEffect(() => {
+    const init = async () => {
+      await getDb();
+
+      const saved24h = await getSetting("is24h");
+      const savedMinH = await getSetting("min_h");
+      const savedMinM = await getSetting("min_m");
+      const savedMinS = await getSetting("min_s");
+      const savedMaxH = await getSetting("max_h");
+      const savedMaxM = await getSetting("max_m");
+      const savedMaxS = await getSetting("max_s");
+
+      if (saved24h !== null) setIs24h(saved24h === "true");
+      if (savedMinH !== null) setMinH(savedMinH);
+      if (savedMinM !== null) setMinM(savedMinM);
+      if (savedMinS !== null) setMinS(savedMinS);
+      if (savedMaxH !== null) setMaxH(savedMaxH);
+      if (savedMaxM !== null) setMaxM(savedMaxM);
+      if (savedMaxS !== null) setMaxS(savedMaxS);
+
+      await loadTasks();
+
+      isMountedRef.current = true;
+      setDbReady(true);
+    };
+
+    init();
+  }, [loadTasks]);
+
+  // Persist format toggle
+  useEffect(() => {
+    if (!isMountedRef.current) return;
+    upsertSetting("is24h", String(is24h));
+  }, [is24h]);
+
+  // Persist min range
+  useEffect(() => {
+    if (!isMountedRef.current) return;
+    upsertSetting("min_h", minH);
+    upsertSetting("min_m", minM);
+    upsertSetting("min_s", minS);
+  }, [minH, minM, minS]);
+
+  // Persist max range
+  useEffect(() => {
+    if (!isMountedRef.current) return;
+    upsertSetting("max_h", maxH);
+    upsertSetting("max_m", maxM);
+    upsertSetting("max_s", maxS);
+  }, [maxH, maxM, maxS]);
 
   const parseVal = (v: string, max: number): number => {
     const n = parseInt(v, 10);
@@ -193,6 +295,33 @@ export default function App() {
     setIs24h((prev) => !prev);
     setCopied(false);
   };
+
+  const handleDeleteTask = useCallback(
+    (task: Task) => {
+      Alert.alert(
+        "Delete Task",
+        `Delete "${task.title}"? Scheduled notifications will also be cancelled.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: async () => {
+              if (task.alarm_notification_id) {
+                await cancelNotification(task.alarm_notification_id);
+              }
+              if (task.reminder_notification_id) {
+                await cancelNotification(task.reminder_notification_id);
+              }
+              await deleteTask(task.id);
+              await loadTasks();
+            },
+          },
+        ]
+      );
+    },
+    [loadTasks]
+  );
 
   return (
     <SafeAreaProvider>
@@ -292,6 +421,7 @@ export default function App() {
               eventMinute={result.m}
               eventSecond={result.s}
               onClose={() => setModalVisible(false)}
+              onTaskSaved={loadTasks}
             />
           )}
 
@@ -327,6 +457,21 @@ export default function App() {
                   </View>
                 )}
               />
+            </View>
+          )}
+
+          {/* Saved Tasks */}
+          {dbReady && tasks.length > 0 && (
+            <View style={styles.taskListContainer}>
+              <Text style={styles.taskListTitle}>Saved Tasks</Text>
+              {tasks.map((task) => (
+                <TaskListItem
+                  key={task.id}
+                  task={task}
+                  is24h={is24h}
+                  onDelete={handleDeleteTask}
+                />
+              ))}
             </View>
           )}
         </ScrollView>
@@ -581,5 +726,55 @@ const styles = StyleSheet.create({
   },
   historyTimeLatest: {
     color: "#6c63ff",
+  },
+
+  // Saved Tasks
+  taskListContainer: {
+    marginTop: 32,
+    width: "100%",
+    maxWidth: 400,
+  },
+  taskListTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#8888aa",
+    textTransform: "uppercase",
+    letterSpacing: 1.5,
+    marginBottom: 12,
+  },
+  taskItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1a1a2e",
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 6,
+  },
+  taskInfo: {
+    flex: 1,
+  },
+  taskTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#ffffff",
+    marginBottom: 4,
+  },
+  taskMeta: {
+    fontSize: 12,
+    color: "#8888aa",
+    letterSpacing: 0.5,
+  },
+  taskDeleteButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ff6b6b44",
+  },
+  taskDeleteText: {
+    color: "#ff6b6b",
+    fontSize: 12,
+    fontWeight: "600",
   },
 });
