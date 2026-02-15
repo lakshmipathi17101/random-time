@@ -33,7 +33,37 @@ export async function requestNotificationPermission(): Promise<boolean> {
     });
   }
 
+  // Register action category for alarm notifications
+  await Notifications.setNotificationCategoryAsync("task_alarm", [
+    {
+      identifier: "done",
+      buttonTitle: "Done",
+      options: { isDestructive: false, isAuthenticationRequired: false },
+    },
+    {
+      identifier: "postpone",
+      buttonTitle: "Postpone",
+      options: { isDestructive: false, isAuthenticationRequired: false },
+    },
+  ]);
+
   return true;
+}
+
+export function setupNotificationResponseHandler(
+  onDone: (taskId: number) => void,
+  onPostpone: (taskId: number) => void
+): () => void {
+  const subscription = Notifications.addNotificationResponseReceivedListener(
+    (response) => {
+      const actionId = response.actionIdentifier;
+      const taskId = response.notification.request.content.data?.taskId as number | undefined;
+      if (taskId == null) return;
+      if (actionId === "done") onDone(taskId);
+      else if (actionId === "postpone") onPostpone(taskId);
+    }
+  );
+  return () => subscription.remove();
 }
 
 export async function scheduleReminder(
@@ -67,7 +97,8 @@ export async function scheduleReminder(
 
 export async function scheduleAlarm(
   title: string,
-  eventDate: Date
+  eventDate: Date,
+  taskId?: number
 ): Promise<string | null> {
   if (eventDate <= new Date()) {
     return null;
@@ -78,6 +109,8 @@ export async function scheduleAlarm(
       title: "Time is now!",
       body: `"${title}" — your random time has arrived.`,
       sound: "default",
+      categoryIdentifier: "task_alarm",
+      data: taskId != null ? { taskId } : {},
       ...(Platform.OS === "android" && { channelId: "alarms" }),
     },
     trigger: {
