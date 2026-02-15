@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   StyleSheet,
   Text,
@@ -11,6 +11,9 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import DateTimePicker, {
+  DateTimePickerEvent,
+} from "@react-native-community/datetimepicker";
 import {
   requestCalendarPermission,
   createCalendarEvent,
@@ -19,10 +22,14 @@ import {
   requestNotificationPermission,
   scheduleReminder,
   scheduleAlarm,
+  cancelNotification,
 } from "./notificationService";
-import { insertTask } from "./db";
+import { insertTask, updateTask, Task, TaskCategory, TaskPriority } from "./db";
+import * as Haptics from "expo-haptics";
 
 const REMINDER_OPTIONS = [5, 10, 15, 30] as const;
+const CATEGORY_OPTIONS: TaskCategory[] = ["Work", "Personal", "Health", "Other"];
+const PRIORITY_OPTIONS: TaskPriority[] = ["High", "Medium", "Low"];
 
 interface AddEventModalProps {
   visible: boolean;
@@ -31,6 +38,7 @@ interface AddEventModalProps {
   eventSecond: number;
   onClose: () => void;
   onTaskSaved: () => void;
+  editTask?: Task;
 }
 
 export default function AddEventModal({
@@ -40,16 +48,42 @@ export default function AddEventModal({
   eventSecond,
   onClose,
   onTaskSaved,
+  editTask,
 }: AddEventModalProps) {
   const [taskName, setTaskName] = useState("");
-  const [reminderMin, setReminderMin] = useState(10);
+  const [notes, setNotes] = useState("");
+  const [selectedDate, setSelectedDate] = useState<Date>(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today;
+  });
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [category, setCategory] = useState<TaskCategory | null>(null);
+  const [priority, setPriority] = useState<TaskPriority | null>(null);
+  const [selectedReminders, setSelectedReminders] = useState<number[]>([10]);
   const [customMinutes, setCustomMinutes] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const effectiveReminderMin: number = (() => {
+  // Pre-fill fields when editing an existing task
+  useEffect(() => {
+    if (visible && editTask) {
+      setTaskName(editTask.title);
+      setNotes(editTask.notes ?? "");
+      const d = new Date(editTask.event_date);
+      const dateOnly = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      setSelectedDate(dateOnly);
+      setSelectedReminders([editTask.reminder_minutes]);
+      setCustomMinutes("");
+      setCategory(editTask.category ?? null);
+      setPriority(editTask.priority ?? null);
+    }
+  }, [visible, editTask]);
+
+  const effectiveReminderMins: number[] = (() => {
+    const all = [...selectedReminders];
     const parsed = parseInt(customMinutes, 10);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
-    return reminderMin;
+    if (!isNaN(parsed) && parsed > 0 && !all.includes(parsed)) all.push(parsed);
+    return all.sort((a, b) => b - a); // descending: 30, 10, 5
   })();
 
   const handleSave = async () => {
@@ -58,71 +92,110 @@ export default function AddEventModal({
       Alert.alert("Missing task name", "Please enter a task name.");
       return;
     }
-    if (effectiveReminderMin <= 0) {
-      Alert.alert("Invalid reminder", "Enter a reminder time greater than 0.");
+    if (effectiveReminderMins.length === 0) {
+      Alert.alert("Invalid reminder", "Select at least one reminder time.");
       return;
     }
 
     setSaving(true);
 
     try {
-      const calGranted = await requestCalendarPermission();
-      if (!calGranted) {
-        Alert.alert(
-          "Permission denied",
-          "Calendar access is needed to create events."
-        );
-        setSaving(false);
-        return;
-      }
+      const srcH = editTask ? new Date(editTask.event_date).getHours() : eventHour;
+      const srcM = editTask ? new Date(editTask.event_date).getMinutes() : eventMinute;
+      const srcS = editTask ? new Date(editTask.event_date).getSeconds() : eventSecond;
 
-      const now = new Date();
       const eventDate = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-        eventHour,
-        eventMinute,
-        eventSecond
+        selectedDate.getFullYear(),
+        selectedDate.getMonth(),
+        selectedDate.getDate(),
+        srcH,
+        srcM,
+        srcS
       );
 
-      const calendarEventId = await createCalendarEvent(name, eventDate);
-
       const notifGranted = await requestNotificationPermission();
-
-      let reminderId: string | null = null;
       let alarmId: string | null = null;
+      const reminderIds: string[] = [];
 
-      if (notifGranted) {
-        reminderId = await scheduleReminder(name, eventDate, effectiveReminderMin);
-        alarmId = await scheduleAlarm(name, eventDate);
+      if (editTask) {
+        // Edit mode: cancel all old notifications
+        if (editTask.alarm_notification_id) await cancelNotification(editTask.alarm_notification_id);
+        if (editTask.reminder_notification_id) await cancelNotification(editTask.reminder_notification_id);
+        if (editTask.reminder_notification_ids) {
+          const oldIds: string[] = JSON.parse(editTask.reminder_notification_ids);
+          for (const id of oldIds) await cancelNotification(id);
+        }
+
+        if (notifGranted) {
+          for (const mins of effectiveReminderMins) {
+            const id = await scheduleReminder(name, eventDate, mins);
+            if (id) reminderIds.push(id);
+          }
+          alarmId = await scheduleAlarm(name, eventDate);
+        }
+
+        await updateTask(editTask.id, {
+          title: name,
+          event_date: eventDate.toISOString(),
+          reminder_minutes: effectiveReminderMins[0] ?? 10,
+          notes: notes.trim() || null,
+          alarm_notification_id: alarmId,
+          reminder_notification_id: reminderIds[0] ?? null,
+          reminder_notification_ids: JSON.stringify(reminderIds),
+          category,
+          priority,
+        });
+      } else {
+        // Create mode
+        const calGranted2 = await requestCalendarPermission();
+        if (!calGranted2) {
+          Alert.alert("Permission denied", "Calendar access is needed to create events.");
+          setSaving(false);
+          return;
+        }
+
+        const calendarEventId = await createCalendarEvent(name, eventDate);
+
+        if (notifGranted) {
+          for (const mins of effectiveReminderMins) {
+            const id = await scheduleReminder(name, eventDate, mins);
+            if (id) reminderIds.push(id);
+          }
+          alarmId = await scheduleAlarm(name, eventDate);
+        }
+
+        await insertTask({
+          title: name,
+          event_date: eventDate.toISOString(),
+          reminder_minutes: effectiveReminderMins[0] ?? 10,
+          alarm_notification_id: alarmId,
+          reminder_notification_id: reminderIds[0] ?? null,
+          reminder_notification_ids: JSON.stringify(reminderIds),
+          calendar_event_id: calendarEventId,
+          notes: notes.trim() || null,
+          category,
+          priority,
+        });
       }
 
-      await insertTask({
-        title: name,
-        event_date: eventDate.toISOString(),
-        reminder_minutes: effectiveReminderMin,
-        alarm_notification_id: alarmId,
-        reminder_notification_id: reminderId,
-        calendar_event_id: calendarEventId,
-      });
-
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onTaskSaved();
 
       if (!notifGranted) {
         Alert.alert(
-          "Event created",
-          "Calendar event saved. Notification permission was denied — no reminders will fire."
+          editTask ? "Task updated" : "Event created",
+          "Saved. Notification permission was denied — no reminders will fire."
         );
-      } else if (!reminderId && !alarmId) {
+      } else if (reminderIds.length === 0 && !alarmId) {
         Alert.alert(
-          "Event created",
-          "Calendar event saved. The event time has already passed so no notifications were scheduled."
+          editTask ? "Task updated" : "Event created",
+          "Saved. The event time has already passed so no notifications were scheduled."
         );
       } else {
+        const label = effectiveReminderMins.map((m) => `${m} min`).join(", ");
         Alert.alert(
           "Saved",
-          `Event created with a ${effectiveReminderMin} min reminder and an alarm at the event time.`
+          `${editTask ? "Task updated" : "Event created"} with reminders at ${label} before and an alarm at event time.`
         );
       }
 
@@ -137,8 +210,15 @@ export default function AddEventModal({
 
   const resetAndClose = () => {
     setTaskName("");
-    setReminderMin(10);
+    setNotes("");
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    setSelectedDate(today);
+    setShowDatePicker(false);
+    setSelectedReminders([10]);
     setCustomMinutes("");
+    setCategory(null);
+    setPriority(null);
     onClose();
   };
 
@@ -154,7 +234,7 @@ export default function AddEventModal({
         style={styles.overlay}
       >
         <View style={styles.sheet}>
-          <Text style={styles.title}>Add to Calendar</Text>
+          <Text style={styles.title}>{editTask ? "Edit Task" : "Add to Calendar"}</Text>
 
           {/* Task Name */}
           <Text style={styles.label}>Task Name</Text>
@@ -167,28 +247,105 @@ export default function AddEventModal({
             autoFocus
           />
 
-          {/* Reminder Chips */}
-          <Text style={styles.label}>Remind me before</Text>
+          {/* Date Picker */}
+          <Text style={styles.label}>Date</Text>
+          <TouchableOpacity
+            style={styles.dateButton}
+            onPress={() => setShowDatePicker(true)}
+          >
+            <Text style={styles.dateButtonText}>
+              {selectedDate.toLocaleDateString(undefined, {
+                weekday: "short",
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+              })}
+            </Text>
+          </TouchableOpacity>
+          {showDatePicker && (
+            <DateTimePicker
+              value={selectedDate}
+              mode="date"
+              display={Platform.OS === "ios" ? "inline" : "default"}
+              minimumDate={new Date(new Date().setHours(0, 0, 0, 0))}
+              onChange={(event: DateTimePickerEvent, date?: Date) => {
+                setShowDatePicker(Platform.OS === "ios");
+                if (event.type === "set" && date) {
+                  setSelectedDate(date);
+                }
+              }}
+            />
+          )}
+
+          {/* Notes */}
+          <Text style={styles.label}>Notes (optional)</Text>
+          <TextInput
+            style={[styles.textInput, styles.textInputMultiline]}
+            placeholder="Add a note…"
+            placeholderTextColor="#666680"
+            value={notes}
+            onChangeText={setNotes}
+            multiline
+            numberOfLines={3}
+          />
+
+          {/* Category */}
+          <Text style={styles.label}>Category</Text>
           <View style={styles.chipRow}>
-            {REMINDER_OPTIONS.map((min) => (
+            {CATEGORY_OPTIONS.map((cat) => (
               <TouchableOpacity
-                key={min}
-                style={[styles.chip, reminderMin === min && !customMinutes && styles.chipActive]}
-                onPress={() => {
-                  setReminderMin(min);
-                  setCustomMinutes("");
-                }}
+                key={cat}
+                style={[styles.chip, category === cat && styles.chipActive]}
+                onPress={() => setCategory(category === cat ? null : cat)}
               >
-                <Text
-                  style={[
-                    styles.chipText,
-                    reminderMin === min && !customMinutes && styles.chipTextActive,
-                  ]}
-                >
-                  {min} min
+                <Text style={[styles.chipText, category === cat && styles.chipTextActive]}>
+                  {cat}
                 </Text>
               </TouchableOpacity>
             ))}
+          </View>
+
+          {/* Priority */}
+          <Text style={styles.label}>Priority</Text>
+          <View style={styles.chipRow}>
+            {PRIORITY_OPTIONS.map((p) => {
+              const color = p === "High" ? "#ff6b6b" : p === "Medium" ? "#f5a623" : "#4caf50";
+              const active = priority === p;
+              return (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.chip, active && { backgroundColor: color, borderColor: color }]}
+                  onPress={() => setPriority(priority === p ? null : p)}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{p}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Reminder Chips (multi-select) */}
+          <Text style={styles.label}>Remind me before</Text>
+          <View style={styles.chipRow}>
+            {REMINDER_OPTIONS.map((min) => {
+              const active = selectedReminders.includes(min);
+              return (
+                <TouchableOpacity
+                  key={min}
+                  style={[styles.chip, active && styles.chipActive]}
+                  onPress={() => {
+                    setSelectedReminders((prev) =>
+                      prev.includes(min)
+                        ? prev.filter((r) => r !== min)
+                        : [...prev, min]
+                    );
+                  }}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                    {min} min
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           {/* Custom Minutes */}
@@ -201,7 +358,6 @@ export default function AddEventModal({
             value={customMinutes}
             onChangeText={(v) => {
               setCustomMinutes(v);
-              setReminderMin(0);
             }}
             maxLength={4}
           />
@@ -278,6 +434,22 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 2,
     borderColor: "#3a3a55",
+  },
+  dateButton: {
+    backgroundColor: "#2a2a40",
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#3a3a55",
+  },
+  dateButtonText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  textInputMultiline: {
+    minHeight: 72,
+    textAlignVertical: "top",
   },
   textInputSmall: {
     backgroundColor: "#2a2a40",
