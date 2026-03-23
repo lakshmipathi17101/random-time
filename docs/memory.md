@@ -1,6 +1,6 @@
 # Memory — Project Status Tracker
 
-## Current Status: Phase 4 — Task Enhancements (In Progress)
+## Current Status: Phase 6 Complete — Phase 7 next
 
 ## Completed
 - [x] Project initialized with Expo + TypeScript
@@ -20,7 +20,7 @@
 - [x] docs/plan.md updated with all 9 phases
 
 ## In Progress
-- [ ] Phase 4 — Task Enhancements (implementing one by one)
+- [ ] Phase 7 — Time Generation Advanced
 
 ## Decisions Made
 - Expo managed workflow (not bare)
@@ -31,8 +31,9 @@
 - Service files: calendarService.ts, notificationService.ts, db.ts
 
 ## Key Files
-- `App.tsx` — Main app entry and UI
-- `AddEventModal.tsx` — Modal for adding calendar events
+- `App.tsx` — Main app entry and UI (ThemeContext, makeStyles, calcStreak, export JSON)
+- `AddEventModal.tsx` — Modal for adding/editing calendar events (theme-aware)
+- `theme.ts` — AppTheme interface, DARK and LIGHT theme constants
 - `calendarService.ts` — Calendar permission + event creation
 - `notificationService.ts` — Notification permission + scheduling (reminder + alarm)
 - `db.ts` — SQLite schema, all queries, Task type, SettingKey type

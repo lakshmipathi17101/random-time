@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, createContext, useContext } from "react";
 import {
   StyleSheet,
   Text,
@@ -28,9 +28,18 @@ import {
   upsertSetting,
   Task,
   TaskPriority,
+  TaskCategory,
 } from "./db";
 import { cancelNotification, setupNotificationResponseHandler } from "./notificationService";
+import { DARK, LIGHT, AppTheme } from "./theme";
 
+// ─── Theme context ────────────────────────────────────────────────────────────
+const ThemeContext = createContext<AppTheme>(DARK);
+function useAppTheme(): AppTheme {
+  return useContext(ThemeContext);
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
 const MAX_HISTORY = 10;
 
 function pad(n: number): string {
@@ -45,11 +54,7 @@ function timeToSeconds(h: number, m: number, s: number): number {
   return h * 3600 + m * 60 + s;
 }
 
-function secondsToTime(totalSeconds: number): {
-  h: number;
-  m: number;
-  s: number;
-} {
+function secondsToTime(totalSeconds: number): { h: number; m: number; s: number } {
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
   const s = totalSeconds % 60;
@@ -66,6 +71,30 @@ function formatTime12(h: number, m: number, s: number): string {
   return `${pad(h12)}:${pad(m)}:${pad(s)} ${period}`;
 }
 
+function calcStreak(tasks: Task[]): number {
+  const doneDates = new Set(
+    tasks
+      .filter((t) => t.status === "done")
+      .map((t) => {
+        const d = new Date(t.event_date);
+        return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      })
+  );
+  let streak = 0;
+  const check = new Date();
+  for (;;) {
+    const key = `${check.getFullYear()}-${check.getMonth()}-${check.getDate()}`;
+    if (doneDates.has(key)) {
+      streak++;
+      check.setDate(check.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
+// ─── TimeInput ────────────────────────────────────────────────────────────────
 interface TimeInputProps {
   label: string;
   hours: string;
@@ -85,47 +114,50 @@ function TimeInput({
   onChangeMinutes,
   onChangeSeconds,
 }: TimeInputProps) {
+  const t = useAppTheme();
+  const s = useMemo(() => makeStyles(t), [t]);
+
   return (
-    <View style={styles.timeInputGroup}>
-      <Text style={styles.label}>{label}</Text>
-      <View style={styles.timeRow}>
-        <View style={styles.inputWrapper}>
+    <View style={s.timeInputGroup}>
+      <Text style={s.label}>{label}</Text>
+      <View style={s.timeRow}>
+        <View style={s.inputWrapper}>
           <TextInput
-            style={styles.input}
+            style={s.input}
             keyboardType="number-pad"
             maxLength={2}
             value={hours}
             onChangeText={onChangeHours}
             placeholder="HH"
-            placeholderTextColor="#999"
+            placeholderTextColor={t.textDim}
           />
-          <Text style={styles.inputLabel}>hrs</Text>
+          <Text style={s.inputLabel}>hrs</Text>
         </View>
-        <Text style={styles.colon}>:</Text>
-        <View style={styles.inputWrapper}>
+        <Text style={s.colon}>:</Text>
+        <View style={s.inputWrapper}>
           <TextInput
-            style={styles.input}
+            style={s.input}
             keyboardType="number-pad"
             maxLength={2}
             value={minutes}
             onChangeText={onChangeMinutes}
             placeholder="MM"
-            placeholderTextColor="#999"
+            placeholderTextColor={t.textDim}
           />
-          <Text style={styles.inputLabel}>min</Text>
+          <Text style={s.inputLabel}>min</Text>
         </View>
-        <Text style={styles.colon}>:</Text>
-        <View style={styles.inputWrapper}>
+        <Text style={s.colon}>:</Text>
+        <View style={s.inputWrapper}>
           <TextInput
-            style={styles.input}
+            style={s.input}
             keyboardType="number-pad"
             maxLength={2}
             value={seconds}
             onChangeText={onChangeSeconds}
             placeholder="SS"
-            placeholderTextColor="#999"
+            placeholderTextColor={t.textDim}
           />
-          <Text style={styles.inputLabel}>sec</Text>
+          <Text style={s.inputLabel}>sec</Text>
         </View>
       </View>
     </View>
@@ -145,6 +177,7 @@ function priorityColor(p: TaskPriority): string {
   return "#4caf50";
 }
 
+// ─── TaskListItem ─────────────────────────────────────────────────────────────
 interface TaskListItemProps {
   task: Task;
   is24h: boolean;
@@ -157,43 +190,54 @@ interface TaskListItemProps {
   onLongPress: (task: Task) => void;
 }
 
-function TaskListItem({ task, is24h, onDelete, onToggleDone, onPostpone, onEdit, onShare, selected, onLongPress }: TaskListItemProps) {
+function TaskListItem({
+  task,
+  is24h,
+  onDelete,
+  onToggleDone,
+  onPostpone,
+  onEdit,
+  onShare,
+  selected,
+  onLongPress,
+}: TaskListItemProps) {
+  const t = useAppTheme();
+  const s = useMemo(() => makeStyles(t), [t]);
+
   const eventDate = new Date(task.event_date);
   const h = eventDate.getHours();
   const m = eventDate.getMinutes();
-  const s = eventDate.getSeconds();
-  const timeLabel = is24h ? formatTime24(h, m, s) : formatTime12(h, m, s);
+  const sv = eventDate.getSeconds();
+  const timeLabel = is24h ? formatTime24(h, m, sv) : formatTime12(h, m, sv);
   const isDone = task.status === "done";
 
   return (
     <TouchableOpacity
       onLongPress={() => onLongPress(task)}
       activeOpacity={0.8}
-      style={[styles.taskItem, isDone && styles.taskItemDone, selected && styles.taskItemSelected]}
+      style={[s.taskItem, isDone && s.taskItemDone, selected && s.taskItemSelected]}
     >
       <TouchableOpacity
-        style={[styles.checkbox, isDone && styles.checkboxDone]}
+        style={[s.checkbox, isDone && s.checkboxDone]}
         onPress={() => onToggleDone(task)}
       >
-        {isDone && <Text style={styles.checkmark}>✓</Text>}
+        {isDone && <Text style={s.checkmark}>✓</Text>}
       </TouchableOpacity>
-      <View style={styles.taskInfo}>
-        <Text style={[styles.taskTitle, isDone && styles.taskTitleDone]}>
-          {task.title}
-        </Text>
-        <Text style={styles.taskMeta}>
-          {eventDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {timeLabel} · -{task.reminder_minutes} min reminder
+      <View style={s.taskInfo}>
+        <Text style={[s.taskTitle, isDone && s.taskTitleDone]}>{task.title}</Text>
+        <Text style={s.taskMeta}>
+          {eventDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {timeLabel} · -{task.reminder_minutes} min
         </Text>
         {(task.category || task.priority) && (
-          <View style={styles.taskBadgeRow}>
+          <View style={s.taskBadgeRow}>
             {task.category && (
-              <View style={styles.categoryBadge}>
-                <Text style={styles.categoryBadgeText}>{task.category}</Text>
+              <View style={s.categoryBadge}>
+                <Text style={s.categoryBadgeText}>{task.category}</Text>
               </View>
             )}
             {task.priority && (
-              <View style={[styles.priorityBadge, { borderColor: priorityColor(task.priority) }]}>
-                <Text style={[styles.priorityBadgeText, { color: priorityColor(task.priority) }]}>
+              <View style={[s.priorityBadge, { borderColor: priorityColor(task.priority) }]}>
+                <Text style={[s.priorityBadgeText, { color: priorityColor(task.priority) }]}>
                   {task.priority}
                 </Text>
               </View>
@@ -201,42 +245,35 @@ function TaskListItem({ task, is24h, onDelete, onToggleDone, onPostpone, onEdit,
           </View>
         )}
         {task.notes ? (
-          <Text style={styles.taskNotes} numberOfLines={2}>
+          <Text style={s.taskNotes} numberOfLines={2}>
             {task.notes}
           </Text>
         ) : null}
       </View>
-      <View style={styles.taskActions}>
-        <TouchableOpacity
-          style={styles.taskShareButton}
-          onPress={() => onShare(task)}
-        >
-          <Text style={styles.taskShareText}>↑</Text>
+      <View style={s.taskActions}>
+        <TouchableOpacity style={s.taskShareButton} onPress={() => onShare(task)}>
+          <Text style={s.taskShareText}>↑</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.taskEditButton}
-          onPress={() => onEdit(task)}
-        >
-          <Text style={styles.taskEditText}>✎</Text>
+        <TouchableOpacity style={s.taskEditButton} onPress={() => onEdit(task)}>
+          <Text style={s.taskEditText}>✎</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.taskPostponeButton}
-          onPress={() => onPostpone(task)}
-        >
-          <Text style={styles.taskPostponeText}>↻</Text>
+        <TouchableOpacity style={s.taskPostponeButton} onPress={() => onPostpone(task)}>
+          <Text style={s.taskPostponeText}>↻</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.taskDeleteButton}
-          onPress={() => onDelete(task)}
-        >
-          <Text style={styles.taskDeleteText}>✕</Text>
+        <TouchableOpacity style={s.taskDeleteButton} onPress={() => onDelete(task)}>
+          <Text style={s.taskDeleteText}>✕</Text>
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
 }
 
+// ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
+  const [isDark, setIsDark] = useState(true);
+  const theme = isDark ? DARK : LIGHT;
+  const s = useMemo(() => makeStyles(theme), [theme]);
+
   const [minH, setMinH] = useState("00");
   const [minM, setMinM] = useState("00");
   const [minS, setMinS] = useState("00");
@@ -282,8 +319,9 @@ export default function App() {
       const savedMaxH = await getSetting("max_h");
       const savedMaxM = await getSetting("max_m");
       const savedMaxS = await getSetting("max_s");
-
       const savedDefaultReminder = await getSetting("default_reminder");
+      const savedTheme = await getSetting("theme");
+
       if (saved24h !== null) setIs24h(saved24h === "true");
       if (savedMinH !== null) setMinH(savedMinH);
       if (savedMinM !== null) setMinM(savedMinM);
@@ -292,6 +330,7 @@ export default function App() {
       if (savedMaxM !== null) setMaxM(savedMaxM);
       if (savedMaxS !== null) setMaxS(savedMaxS);
       if (savedDefaultReminder !== null) setDefaultReminder(savedDefaultReminder);
+      if (savedTheme !== null) setIsDark(savedTheme === "dark");
 
       await loadTasks();
 
@@ -335,13 +374,12 @@ export default function App() {
     return cleanup;
   }, [loadTasks, minH, minM, minS, maxH, maxM, maxS]);
 
-  // Persist format toggle
+  // Persist settings
   useEffect(() => {
     if (!isMountedRef.current) return;
     upsertSetting("is24h", String(is24h));
   }, [is24h]);
 
-  // Persist min range
   useEffect(() => {
     if (!isMountedRef.current) return;
     upsertSetting("min_h", minH);
@@ -349,7 +387,6 @@ export default function App() {
     upsertSetting("min_s", minS);
   }, [minH, minM, minS]);
 
-  // Persist max range
   useEffect(() => {
     if (!isMountedRef.current) return;
     upsertSetting("max_h", maxH);
@@ -357,11 +394,15 @@ export default function App() {
     upsertSetting("max_s", maxS);
   }, [maxH, maxM, maxS]);
 
-  // Persist default reminder
   useEffect(() => {
     if (!isMountedRef.current) return;
     upsertSetting("default_reminder", defaultReminder);
   }, [defaultReminder]);
+
+  useEffect(() => {
+    if (!isMountedRef.current) return;
+    upsertSetting("theme", isDark ? "dark" : "light");
+  }, [isDark]);
 
   const parseVal = (v: string, max: number): number => {
     const n = parseInt(v, 10);
@@ -370,8 +411,8 @@ export default function App() {
   };
 
   const formatResult = useCallback(
-    (h: number, m: number, s: number) => {
-      return is24h ? formatTime24(h, m, s) : formatTime12(h, m, s);
+    (h: number, m: number, sv: number) => {
+      return is24h ? formatTime24(h, m, sv) : formatTime12(h, m, sv);
     },
     [is24h]
   );
@@ -450,6 +491,17 @@ export default function App() {
     return list;
   }, [tasks, filterStatus, searchQuery, sortBy, priorityRank]);
 
+  const categoryStats = useMemo((): [string, number][] => {
+    const counts: Record<string, number> = {};
+    for (const task of tasks) {
+      const cat: string = task.category ?? "Other";
+      counts[cat] = (counts[cat] ?? 0) + 1;
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [tasks]);
+
+  const streak = useMemo(() => calcStreak(tasks), [tasks]);
+
   const handleLongPress = useCallback((task: Task) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -515,17 +567,43 @@ export default function App() {
     );
   }, [loadTasks]);
 
-  const handleShareTask = useCallback((task: Task) => {
-    const d = new Date(task.event_date);
-    const dateStr = d.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
-    const h = d.getHours(), m = d.getMinutes(), s = d.getSeconds();
-    const timeStr = is24h ? formatTime24(h, m, s) : formatTime12(h, m, s);
-    const lines = [`📅 ${task.title}`, `🕐 ${dateStr} at ${timeStr}`];
-    if (task.category) lines.push(`🏷 ${task.category}`);
-    if (task.priority) lines.push(`⚡ Priority: ${task.priority}`);
-    if (task.notes) lines.push(`📝 ${task.notes}`);
-    Share.share({ message: lines.join("\n") });
-  }, [is24h]);
+  const handleExportTasks = useCallback(async () => {
+    const allTasks = await getTasks();
+    if (allTasks.length === 0) {
+      Alert.alert("No tasks", "There are no tasks to export.");
+      return;
+    }
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      count: allTasks.length,
+      tasks: allTasks,
+    };
+    const json = JSON.stringify(payload, null, 2);
+    await Share.share({
+      message: json,
+      title: "RandomTime Tasks Backup",
+    });
+  }, []);
+
+  const handleShareTask = useCallback(
+    (task: Task) => {
+      const d = new Date(task.event_date);
+      const dateStr = d.toLocaleDateString(undefined, {
+        weekday: "short",
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+      const h = d.getHours(), m = d.getMinutes(), sv = d.getSeconds();
+      const timeStr = is24h ? formatTime24(h, m, sv) : formatTime12(h, m, sv);
+      const lines = [`📅 ${task.title}`, `🕐 ${dateStr} at ${timeStr}`];
+      if (task.category) lines.push(`🏷 ${task.category}`);
+      if (task.priority) lines.push(`⚡ Priority: ${task.priority}`);
+      if (task.notes) lines.push(`📝 ${task.notes}`);
+      Share.share({ message: lines.join("\n") });
+    },
+    [is24h]
+  );
 
   const handleEditTask = useCallback((task: Task) => {
     setEditingTask(task);
@@ -602,916 +680,1024 @@ export default function App() {
     [loadTasks]
   );
 
+  const doneCount = tasks.filter((t) => t.status === "done").length;
+  const completeRate = tasks.length > 0 ? Math.round((doneCount / tasks.length) * 100) : 0;
+
   return (
-    <SafeAreaProvider>
-    <SafeAreaView style={styles.container}>
-      <StatusBar style="light" />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.flex}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          <Text style={styles.title}>Random Time</Text>
-          <Text style={styles.subtitle}>Generator</Text>
-
-          {/* Settings Panel */}
-          <TouchableOpacity
-            style={styles.settingsToggle}
-            onPress={() => setSettingsVisible((v) => !v)}
+    <ThemeContext.Provider value={theme}>
+      <SafeAreaProvider>
+        <SafeAreaView style={s.container}>
+          <StatusBar style={isDark ? "light" : "dark"} />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={s.flex}
           >
-            <Text style={styles.settingsToggleText}>
-              {settingsVisible ? "▲ Settings" : "▼ Settings"}
-            </Text>
-          </TouchableOpacity>
-          {settingsVisible && (
-            <View style={styles.settingsPanel}>
-              <Text style={styles.settingsSectionLabel}>Default Reminder (minutes)</Text>
-              <TextInput
-                style={styles.settingsInput}
-                keyboardType="number-pad"
-                maxLength={3}
-                value={defaultReminder}
-                onChangeText={setDefaultReminder}
-                placeholderTextColor="#666680"
-                placeholder="10"
-              />
+            <ScrollView
+              contentContainerStyle={s.scrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={s.title}>Random Time</Text>
+              <Text style={s.subtitle}>Generator</Text>
+
+              {/* Settings Panel */}
               <TouchableOpacity
-                style={styles.settingsDangerButton}
-                onPress={handleDeleteAllDone}
+                style={s.settingsToggle}
+                onPress={() => setSettingsVisible((v) => !v)}
               >
-                <Text style={styles.settingsDangerText}>Delete all done tasks</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Format Toggle */}
-          <TouchableOpacity style={styles.toggleRow} onPress={toggleFormat}>
-            <Text style={[styles.toggleOption, is24h && styles.toggleActive]}>
-              24H
-            </Text>
-            <View style={styles.toggleTrack}>
-              <View
-                style={[
-                  styles.toggleThumb,
-                  !is24h && styles.toggleThumbRight,
-                ]}
-              />
-            </View>
-            <Text style={[styles.toggleOption, !is24h && styles.toggleActive]}>
-              12H
-            </Text>
-          </TouchableOpacity>
-
-          {/* Range Card */}
-          <View style={styles.card}>
-            <TimeInput
-              label="From"
-              hours={minH}
-              minutes={minM}
-              seconds={minS}
-              onChangeHours={setMinH}
-              onChangeMinutes={setMinM}
-              onChangeSeconds={setMinS}
-            />
-
-            <View style={styles.divider} />
-
-            <TimeInput
-              label="To"
-              hours={maxH}
-              minutes={maxM}
-              seconds={maxS}
-              onChangeHours={setMaxH}
-              onChangeMinutes={setMaxM}
-              onChangeSeconds={setMaxS}
-            />
-          </View>
-
-          {error && <Text style={styles.error}>{error}</Text>}
-
-          {/* Count selector + Generate */}
-          <View style={styles.generateRow}>
-            {([1, 3, 5] as const).map((n) => (
-              <TouchableOpacity
-                key={n}
-                style={[styles.countChip, generateCount === n && styles.countChipActive]}
-                onPress={() => setGenerateCount(n)}
-              >
-                <Text style={[styles.countChipText, generateCount === n && styles.countChipTextActive]}>
-                  ×{n}
+                <Text style={s.settingsToggleText}>
+                  {settingsVisible ? "▲ Settings" : "▼ Settings"}
                 </Text>
               </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={[styles.button, styles.buttonFlex]} onPress={generate}>
-              <Text style={styles.buttonText}>Generate</Text>
-            </TouchableOpacity>
-          </View>
+              {settingsVisible && (
+                <View style={s.settingsPanel}>
+                  {/* Default Reminder */}
+                  <Text style={s.settingsSectionLabel}>Default Reminder (minutes)</Text>
+                  <TextInput
+                    style={s.settingsInput}
+                    keyboardType="number-pad"
+                    maxLength={3}
+                    value={defaultReminder}
+                    onChangeText={setDefaultReminder}
+                    placeholderTextColor={theme.textDim}
+                    placeholder="10"
+                  />
 
-          {/* Results */}
-          {results.map((r, idx) => (
-            <View key={idx} style={styles.resultContainer}>
-              <Text style={styles.resultLabel}>
-                {results.length > 1 ? `Time ${idx + 1}` : "Your random time"}
-              </Text>
-              <Text style={styles.result}>{formatResult(r.h, r.m, r.s)}</Text>
-              <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={styles.copyButton}
-                  onPress={() => copyToClipboard(idx)}
-                >
-                  <Text style={styles.copyButtonText}>
-                    {copied && activeResultIdx === idx ? "Copied!" : "Copy"}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.calendarButton}
-                  onPress={() => {
-                    setActiveResultIdx(idx);
-                    setEditingTask(undefined);
-                    setModalVisible(true);
-                  }}
-                >
-                  <Text style={styles.calendarButtonText}>Add to Calendar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
-
-          {/* Add Event Modal */}
-          <AddEventModal
-            visible={modalVisible}
-            eventHour={results[activeResultIdx]?.h ?? 0}
-            eventMinute={results[activeResultIdx]?.m ?? 0}
-            eventSecond={results[activeResultIdx]?.s ?? 0}
-            onClose={() => { setModalVisible(false); setEditingTask(undefined); }}
-            onTaskSaved={loadTasks}
-            editTask={editingTask}
-            defaultReminderMin={parseInt(defaultReminder, 10) || 10}
-          />
-
-          {/* History */}
-          {history.length > 0 && (
-            <View style={styles.historyContainer}>
-              <View style={styles.historyHeader}>
-                <Text style={styles.historyTitle}>History</Text>
-                <TouchableOpacity onPress={() => setHistory([])}>
-                  <Text style={styles.clearText}>Clear</Text>
-                </TouchableOpacity>
-              </View>
-              <FlatList
-                data={history}
-                scrollEnabled={false}
-                keyExtractor={(item) => item.id}
-                renderItem={({ item, index }) => (
-                  <View
-                    style={[
-                      styles.historyItem,
-                      index === 0 && styles.historyItemLatest,
-                    ]}
-                  >
-                    <Text style={styles.historyIndex}>#{index + 1}</Text>
-                    <Text
-                      style={[
-                        styles.historyTime,
-                        index === 0 && styles.historyTimeLatest,
-                      ]}
+                  {/* Theme Toggle */}
+                  <Text style={s.settingsSectionLabel}>Theme</Text>
+                  <View style={s.themeRow}>
+                    <TouchableOpacity
+                      style={[s.themeChip, isDark && s.themeChipActive]}
+                      onPress={() => setIsDark(true)}
                     >
-                      {formatResult(item.h, item.m, item.s)}
-                    </Text>
+                      <Text style={[s.themeChipText, isDark && s.themeChipTextActive]}>🌙 Dark</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[s.themeChip, !isDark && s.themeChipActive]}
+                      onPress={() => setIsDark(false)}
+                    >
+                      <Text style={[s.themeChipText, !isDark && s.themeChipTextActive]}>☀️ Light</Text>
+                    </TouchableOpacity>
                   </View>
-                )}
-              />
-            </View>
-          )}
 
-          {/* Saved Tasks */}
-          {dbReady && tasks.length > 0 && (
-            <View style={styles.taskListContainer}>
-              {/* Header */}
-              <View style={styles.taskListHeader}>
-                <Text style={styles.taskListTitle}>Saved Tasks</Text>
-                {selectedIds.size > 0 && (
-                  <TouchableOpacity
-                    style={styles.bulkDeleteButton}
-                    onPress={handleBulkDelete}
-                  >
-                    <Text style={styles.bulkDeleteText}>
-                      Delete {selectedIds.size}
-                    </Text>
+                  {/* Export */}
+                  <TouchableOpacity style={s.settingsActionButton} onPress={handleExportTasks}>
+                    <Text style={s.settingsActionText}>Export tasks as JSON</Text>
                   </TouchableOpacity>
-                )}
-              </View>
 
-              {/* Search */}
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search tasks…"
-                placeholderTextColor="#666680"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-              />
-
-              {/* Filter chips */}
-              <View style={styles.filterRow}>
-                {(["all", "pending", "done"] as const).map((f) => (
-                  <TouchableOpacity
-                    key={f}
-                    style={[styles.filterChip, filterStatus === f && styles.filterChipActive]}
-                    onPress={() => setFilterStatus(f)}
-                  >
-                    <Text style={[styles.filterChipText, filterStatus === f && styles.filterChipTextActive]}>
-                      {f === "all" ? "All" : f === "pending" ? "Pending" : "Done"}
-                    </Text>
+                  {/* Delete Done */}
+                  <TouchableOpacity style={s.settingsDangerButton} onPress={handleDeleteAllDone}>
+                    <Text style={s.settingsDangerText}>Delete all done tasks</Text>
                   </TouchableOpacity>
-                ))}
-                <View style={styles.filterSpacer} />
-                {(["time", "priority", "created"] as const).map((s) => (
-                  <TouchableOpacity
-                    key={s}
-                    style={[styles.sortChip, sortBy === s && styles.sortChipActive]}
-                    onPress={() => setSortBy(s)}
-                  >
-                    <Text style={[styles.sortChipText, sortBy === s && styles.sortChipTextActive]}>
-                      {s === "time" ? "Time" : s === "priority" ? "Priority" : "Created"}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {displayedTasks.map((task) => (
-                <TaskListItem
-                  key={task.id}
-                  task={task}
-                  is24h={is24h}
-                  onDelete={handleDeleteTask}
-                  onToggleDone={handleToggleDone}
-                  onPostpone={handlePostpone}
-                  onEdit={handleEditTask}
-                  onShare={handleShareTask}
-                  selected={selectedIds.has(task.id)}
-                  onLongPress={handleLongPress}
-                />
-              ))}
-              {displayedTasks.length === 0 && (
-                <Text style={styles.emptyText}>No tasks match.</Text>
+                </View>
               )}
-            </View>
-          )}
 
-          {/* Statistics */}
-          {dbReady && tasks.length > 0 && (
-            <View style={styles.statsContainer}>
-              <Text style={styles.statsTitle}>Statistics</Text>
-              <View style={styles.statsRow}>
-                <View style={styles.statCard}>
-                  <Text style={styles.statValue}>{tasks.length}</Text>
-                  <Text style={styles.statLabel}>Total</Text>
+              {/* Format Toggle */}
+              <TouchableOpacity style={s.toggleRow} onPress={toggleFormat}>
+                <Text style={[s.toggleOption, is24h && s.toggleActive]}>24H</Text>
+                <View style={s.toggleTrack}>
+                  <View style={[s.toggleThumb, !is24h && s.toggleThumbRight]} />
                 </View>
-                <View style={styles.statCard}>
-                  <Text style={[styles.statValue, { color: "#6c63ff" }]}>
-                    {tasks.filter((t) => t.status === "done").length}
-                  </Text>
-                  <Text style={styles.statLabel}>Done</Text>
-                </View>
-                <View style={styles.statCard}>
-                  <Text style={[styles.statValue, { color: "#4caf50" }]}>
-                    {tasks.length > 0
-                      ? Math.round((tasks.filter((t) => t.status === "done").length / tasks.length) * 100)
-                      : 0}%
-                  </Text>
-                  <Text style={styles.statLabel}>Complete</Text>
-                </View>
+                <Text style={[s.toggleOption, !is24h && s.toggleActive]}>12H</Text>
+              </TouchableOpacity>
+
+              {/* Range Card */}
+              <View style={s.card}>
+                <TimeInput
+                  label="From"
+                  hours={minH}
+                  minutes={minM}
+                  seconds={minS}
+                  onChangeHours={setMinH}
+                  onChangeMinutes={setMinM}
+                  onChangeSeconds={setMinS}
+                />
+                <View style={s.divider} />
+                <TimeInput
+                  label="To"
+                  hours={maxH}
+                  minutes={maxM}
+                  seconds={maxS}
+                  onChangeHours={setMaxH}
+                  onChangeMinutes={setMaxM}
+                  onChangeSeconds={setMaxS}
+                />
               </View>
-            </View>
-          )}
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
-    </SafeAreaProvider>
+
+              {error && <Text style={s.error}>{error}</Text>}
+
+              {/* Count selector + Generate */}
+              <View style={s.generateRow}>
+                {([1, 3, 5] as const).map((n) => (
+                  <TouchableOpacity
+                    key={n}
+                    style={[s.countChip, generateCount === n && s.countChipActive]}
+                    onPress={() => setGenerateCount(n)}
+                  >
+                    <Text style={[s.countChipText, generateCount === n && s.countChipTextActive]}>
+                      ×{n}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity style={[s.button, s.buttonFlex]} onPress={generate}>
+                  <Text style={s.buttonText}>Generate</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Results */}
+              {results.map((r, idx) => (
+                <View key={idx} style={s.resultContainer}>
+                  <Text style={s.resultLabel}>
+                    {results.length > 1 ? `Time ${idx + 1}` : "Your random time"}
+                  </Text>
+                  <Text style={s.result}>{formatResult(r.h, r.m, r.s)}</Text>
+                  <View style={s.actionRow}>
+                    <TouchableOpacity style={s.copyButton} onPress={() => copyToClipboard(idx)}>
+                      <Text style={s.copyButtonText}>
+                        {copied && activeResultIdx === idx ? "Copied!" : "Copy"}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={s.calendarButton}
+                      onPress={() => {
+                        setActiveResultIdx(idx);
+                        setEditingTask(undefined);
+                        setModalVisible(true);
+                      }}
+                    >
+                      <Text style={s.calendarButtonText}>Add to Calendar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+
+              {/* Add Event Modal */}
+              <AddEventModal
+                visible={modalVisible}
+                eventHour={results[activeResultIdx]?.h ?? 0}
+                eventMinute={results[activeResultIdx]?.m ?? 0}
+                eventSecond={results[activeResultIdx]?.s ?? 0}
+                onClose={() => { setModalVisible(false); setEditingTask(undefined); }}
+                onTaskSaved={loadTasks}
+                editTask={editingTask}
+                defaultReminderMin={parseInt(defaultReminder, 10) || 10}
+                isDark={isDark}
+              />
+
+              {/* History */}
+              {history.length > 0 && (
+                <View style={s.historyContainer}>
+                  <View style={s.historyHeader}>
+                    <Text style={s.historyTitle}>History</Text>
+                    <TouchableOpacity onPress={() => setHistory([])}>
+                      <Text style={s.clearText}>Clear</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <FlatList
+                    data={history}
+                    scrollEnabled={false}
+                    keyExtractor={(item) => item.id}
+                    renderItem={({ item, index }) => (
+                      <View style={[s.historyItem, index === 0 && s.historyItemLatest]}>
+                        <Text style={s.historyIndex}>#{index + 1}</Text>
+                        <Text style={[s.historyTime, index === 0 && s.historyTimeLatest]}>
+                          {formatResult(item.h, item.m, item.s)}
+                        </Text>
+                      </View>
+                    )}
+                  />
+                </View>
+              )}
+
+              {/* Saved Tasks */}
+              {dbReady && tasks.length > 0 && (
+                <View style={s.taskListContainer}>
+                  {/* Header */}
+                  <View style={s.taskListHeader}>
+                    <Text style={s.taskListTitle}>Saved Tasks</Text>
+                    {selectedIds.size > 0 && (
+                      <TouchableOpacity style={s.bulkDeleteButton} onPress={handleBulkDelete}>
+                        <Text style={s.bulkDeleteText}>Delete {selectedIds.size}</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Search */}
+                  <TextInput
+                    style={s.searchInput}
+                    placeholder="Search tasks…"
+                    placeholderTextColor={theme.textDim}
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                  />
+
+                  {/* Filter chips */}
+                  <View style={s.filterRow}>
+                    {(["all", "pending", "done"] as const).map((f) => (
+                      <TouchableOpacity
+                        key={f}
+                        style={[s.filterChip, filterStatus === f && s.filterChipActive]}
+                        onPress={() => setFilterStatus(f)}
+                      >
+                        <Text style={[s.filterChipText, filterStatus === f && s.filterChipTextActive]}>
+                          {f === "all" ? "All" : f === "pending" ? "Pending" : "Done"}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                    <View style={s.filterSpacer} />
+                    {(["time", "priority", "created"] as const).map((sv) => (
+                      <TouchableOpacity
+                        key={sv}
+                        style={[s.sortChip, sortBy === sv && s.sortChipActive]}
+                        onPress={() => setSortBy(sv)}
+                      >
+                        <Text style={[s.sortChipText, sortBy === sv && s.sortChipTextActive]}>
+                          {sv === "time" ? "Time" : sv === "priority" ? "Priority" : "Created"}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {displayedTasks.map((task) => (
+                    <TaskListItem
+                      key={task.id}
+                      task={task}
+                      is24h={is24h}
+                      onDelete={handleDeleteTask}
+                      onToggleDone={handleToggleDone}
+                      onPostpone={handlePostpone}
+                      onEdit={handleEditTask}
+                      onShare={handleShareTask}
+                      selected={selectedIds.has(task.id)}
+                      onLongPress={handleLongPress}
+                    />
+                  ))}
+                  {displayedTasks.length === 0 && (
+                    <Text style={s.emptyText}>No tasks match.</Text>
+                  )}
+                </View>
+              )}
+
+              {/* Statistics */}
+              {dbReady && tasks.length > 0 && (
+                <View style={s.statsContainer}>
+                  <Text style={s.statsTitle}>Statistics</Text>
+
+                  {/* Top row: totals */}
+                  <View style={s.statsRow}>
+                    <View style={s.statCard}>
+                      <Text style={s.statValue}>{tasks.length}</Text>
+                      <Text style={s.statLabel}>Total</Text>
+                    </View>
+                    <View style={s.statCard}>
+                      <Text style={[s.statValue, { color: theme.accent }]}>{doneCount}</Text>
+                      <Text style={s.statLabel}>Done</Text>
+                    </View>
+                    <View style={s.statCard}>
+                      <Text style={[s.statValue, { color: "#4caf50" }]}>{completeRate}%</Text>
+                      <Text style={s.statLabel}>Complete</Text>
+                    </View>
+                    <View style={s.statCard}>
+                      <Text style={[s.statValue, { color: "#f5a623" }]}>{streak}</Text>
+                      <Text style={s.statLabel}>Streak 🔥</Text>
+                    </View>
+                  </View>
+
+                  {/* Category breakdown */}
+                  {categoryStats.length > 0 && (
+                    <View style={s.categoryStatsContainer}>
+                      <Text style={s.categoryStatsTitle}>By category</Text>
+                      {categoryStats.map(([cat, count]) => {
+                        const pct = Math.round((count / tasks.length) * 100);
+                        return (
+                          <View key={cat} style={s.categoryStatRow}>
+                            <Text style={s.categoryStatName}>{cat as TaskCategory}</Text>
+                            <View style={s.categoryBarTrack}>
+                              <View style={[s.categoryBarFill, { width: `${pct}%` as `${number}%` }]} />
+                            </View>
+                            <Text style={s.categoryStatCount}>{count}</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              )}
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    </ThemeContext.Provider>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#0f0f1a",
-  },
-  flex: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 60,
-    paddingBottom: 40,
-    alignItems: "center",
-  },
-  title: {
-    fontSize: 36,
-    fontWeight: "800",
-    color: "#ffffff",
-    textAlign: "center",
-  },
-  subtitle: {
-    fontSize: 36,
-    fontWeight: "800",
-    color: "#6c63ff",
-    textAlign: "center",
-    marginBottom: 24,
-  },
+// ─── Styles ───────────────────────────────────────────────────────────────────
+function makeStyles(t: AppTheme) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: t.bg,
+    },
+    flex: {
+      flex: 1,
+    },
+    scrollContent: {
+      flexGrow: 1,
+      paddingHorizontal: 24,
+      paddingTop: 60,
+      paddingBottom: 40,
+      alignItems: "center",
+    },
+    title: {
+      fontSize: 36,
+      fontWeight: "800",
+      color: t.text,
+      textAlign: "center",
+    },
+    subtitle: {
+      fontSize: 36,
+      fontWeight: "800",
+      color: t.accent,
+      textAlign: "center",
+      marginBottom: 24,
+    },
 
-  // Format toggle
-  toggleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 24,
-    gap: 12,
-  },
-  toggleOption: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#555570",
-  },
-  toggleActive: {
-    color: "#6c63ff",
-  },
-  toggleTrack: {
-    width: 44,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "#2a2a40",
-    justifyContent: "center",
-    paddingHorizontal: 2,
-  },
-  toggleThumb: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "#6c63ff",
-  },
-  toggleThumbRight: {
-    alignSelf: "flex-end",
-  },
+    // Format toggle
+    toggleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 24,
+      gap: 12,
+    },
+    toggleOption: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: t.textDim2,
+    },
+    toggleActive: {
+      color: t.accent,
+    },
+    toggleTrack: {
+      width: 44,
+      height: 24,
+      borderRadius: 12,
+      backgroundColor: t.surface2,
+      justifyContent: "center",
+      paddingHorizontal: 2,
+    },
+    toggleThumb: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: t.accent,
+    },
+    toggleThumbRight: {
+      alignSelf: "flex-end",
+    },
 
-  // Card
-  card: {
-    backgroundColor: "#1a1a2e",
-    borderRadius: 20,
-    padding: 24,
-    width: "100%",
-    maxWidth: 400,
-  },
-  timeInputGroup: {
-    marginVertical: 8,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#8888aa",
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
-    marginBottom: 12,
-  },
-  timeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  inputWrapper: {
-    alignItems: "center",
-  },
-  input: {
-    backgroundColor: "#2a2a40",
-    color: "#ffffff",
-    fontSize: 28,
-    fontWeight: "700",
-    textAlign: "center",
-    width: 70,
-    height: 56,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: "#3a3a55",
-  },
-  inputLabel: {
-    fontSize: 11,
-    color: "#666680",
-    marginTop: 4,
-  },
-  colon: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#6c63ff",
-    marginHorizontal: 6,
-    marginBottom: 16,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "#2a2a40",
-    marginVertical: 16,
-  },
-  error: {
-    color: "#ff6b6b",
-    fontSize: 14,
-    marginTop: 16,
-    textAlign: "center",
-  },
+    // Card
+    card: {
+      backgroundColor: t.surface,
+      borderRadius: 20,
+      padding: 24,
+      width: "100%",
+      maxWidth: 400,
+    },
+    timeInputGroup: {
+      marginVertical: 8,
+    },
+    label: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: t.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 1.5,
+      marginBottom: 12,
+    },
+    timeRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    inputWrapper: {
+      alignItems: "center",
+    },
+    input: {
+      backgroundColor: t.surface2,
+      color: t.text,
+      fontSize: 28,
+      fontWeight: "700",
+      textAlign: "center",
+      width: 70,
+      height: 56,
+      borderRadius: 12,
+      borderWidth: 2,
+      borderColor: t.border,
+    },
+    inputLabel: {
+      fontSize: 11,
+      color: t.textDim,
+      marginTop: 4,
+    },
+    colon: {
+      fontSize: 28,
+      fontWeight: "700",
+      color: t.accent,
+      marginHorizontal: 6,
+      marginBottom: 16,
+    },
+    divider: {
+      height: 1,
+      backgroundColor: t.surface2,
+      marginVertical: 16,
+    },
+    error: {
+      color: t.danger,
+      fontSize: 14,
+      marginTop: 16,
+      textAlign: "center",
+    },
 
-  generateRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 28,
-    width: "100%",
-    maxWidth: 400,
-  },
-  countChip: {
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    backgroundColor: "#1a1a2e",
-    borderWidth: 1,
-    borderColor: "#3a3a55",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  countChipActive: {
-    backgroundColor: "#6c63ff33",
-    borderColor: "#6c63ff",
-  },
-  countChipText: {
-    color: "#8888aa",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  countChipTextActive: {
-    color: "#6c63ff",
-  },
-  buttonFlex: {
-    flex: 1,
-    marginTop: 0,
-  },
-  // Generate button
-  button: {
-    backgroundColor: "#6c63ff",
-    paddingVertical: 16,
-    paddingHorizontal: 48,
-    borderRadius: 16,
-    marginTop: 28,
-    width: "100%",
-    maxWidth: 400,
-    alignItems: "center",
-    shadowColor: "#6c63ff",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  buttonText: {
-    color: "#ffffff",
-    fontSize: 18,
-    fontWeight: "700",
-  },
+    generateRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginTop: 28,
+      width: "100%",
+      maxWidth: 400,
+    },
+    countChip: {
+      paddingVertical: 14,
+      paddingHorizontal: 14,
+      borderRadius: 14,
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    countChipActive: {
+      backgroundColor: t.accent + "33",
+      borderColor: t.accent,
+    },
+    countChipText: {
+      color: t.textMuted,
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    countChipTextActive: {
+      color: t.accent,
+    },
+    buttonFlex: {
+      flex: 1,
+      marginTop: 0,
+    },
+    // Generate button
+    button: {
+      backgroundColor: t.accent,
+      paddingVertical: 16,
+      paddingHorizontal: 48,
+      borderRadius: 16,
+      marginTop: 28,
+      width: "100%",
+      maxWidth: 400,
+      alignItems: "center",
+      shadowColor: t.accent,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.3,
+      shadowRadius: 8,
+      elevation: 5,
+    },
+    buttonText: {
+      color: "#ffffff",
+      fontSize: 18,
+      fontWeight: "700",
+    },
 
-  // Result
-  resultContainer: {
-    marginTop: 32,
-    alignItems: "center",
-  },
-  resultLabel: {
-    fontSize: 14,
-    color: "#8888aa",
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
-    marginBottom: 8,
-  },
-  result: {
-    fontSize: 48,
-    fontWeight: "800",
-    color: "#6c63ff",
-    letterSpacing: 3,
-  },
-  actionRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 12,
-  },
-  copyButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#6c63ff",
-  },
-  copyButtonText: {
-    color: "#6c63ff",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  calendarButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    backgroundColor: "#6c63ff",
-  },
-  calendarButtonText: {
-    color: "#ffffff",
-    fontSize: 14,
-    fontWeight: "600",
-  },
+    // Result
+    resultContainer: {
+      marginTop: 32,
+      alignItems: "center",
+    },
+    resultLabel: {
+      fontSize: 14,
+      color: t.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 1.5,
+      marginBottom: 8,
+    },
+    result: {
+      fontSize: 48,
+      fontWeight: "800",
+      color: t.accent,
+      letterSpacing: 3,
+    },
+    actionRow: {
+      flexDirection: "row",
+      gap: 12,
+      marginTop: 12,
+    },
+    copyButton: {
+      paddingVertical: 8,
+      paddingHorizontal: 20,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.accent,
+    },
+    copyButtonText: {
+      color: t.accent,
+      fontSize: 14,
+      fontWeight: "600",
+    },
+    calendarButton: {
+      paddingVertical: 8,
+      paddingHorizontal: 20,
+      borderRadius: 8,
+      backgroundColor: t.accent,
+    },
+    calendarButtonText: {
+      color: "#ffffff",
+      fontSize: 14,
+      fontWeight: "600",
+    },
 
-  // History
-  historyContainer: {
-    marginTop: 32,
-    width: "100%",
-    maxWidth: 400,
-  },
-  historyHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  historyTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#8888aa",
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
-  },
-  clearText: {
-    fontSize: 13,
-    color: "#ff6b6b",
-    fontWeight: "600",
-  },
-  historyItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1a1a2e",
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    marginBottom: 6,
-  },
-  historyItemLatest: {
-    borderWidth: 1,
-    borderColor: "#6c63ff33",
-  },
-  historyIndex: {
-    fontSize: 13,
-    color: "#555570",
-    fontWeight: "600",
-    width: 32,
-  },
-  historyTime: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#aaaacc",
-    letterSpacing: 2,
-  },
-  historyTimeLatest: {
-    color: "#6c63ff",
-  },
+    // History
+    historyContainer: {
+      marginTop: 32,
+      width: "100%",
+      maxWidth: 400,
+    },
+    historyHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 12,
+    },
+    historyTitle: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: t.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 1.5,
+    },
+    clearText: {
+      fontSize: 13,
+      color: t.danger,
+      fontWeight: "600",
+    },
+    historyItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: t.surface,
+      borderRadius: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      marginBottom: 6,
+    },
+    historyItemLatest: {
+      borderWidth: 1,
+      borderColor: t.accent + "33",
+    },
+    historyIndex: {
+      fontSize: 13,
+      color: t.textDim2,
+      fontWeight: "600",
+      width: 32,
+    },
+    historyTime: {
+      fontSize: 18,
+      fontWeight: "700",
+      color: t.historyText,
+      letterSpacing: 2,
+    },
+    historyTimeLatest: {
+      color: t.accent,
+    },
 
-  // Saved Tasks
-  taskListContainer: {
-    marginTop: 32,
-    width: "100%",
-    maxWidth: 400,
-  },
-  taskListTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#8888aa",
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
-    marginBottom: 12,
-  },
-  taskItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1a1a2e",
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginBottom: 6,
-  },
-  taskInfo: {
-    flex: 1,
-  },
-  taskTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#ffffff",
-    marginBottom: 4,
-  },
-  taskMeta: {
-    fontSize: 12,
-    color: "#8888aa",
-    letterSpacing: 0.5,
-  },
-  taskDeleteButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ff6b6b44",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  taskDeleteText: {
-    color: "#ff6b6b",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  taskItemDone: {
-    opacity: 0.6,
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: "#3a3a55",
-    marginRight: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxDone: {
-    backgroundColor: "#6c63ff",
-    borderColor: "#6c63ff",
-  },
-  checkmark: {
-    color: "#ffffff",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  taskTitleDone: {
-    textDecorationLine: "line-through",
-    color: "#666680",
-  },
-  taskNotes: {
-    fontSize: 12,
-    color: "#666680",
-    marginTop: 4,
-    fontStyle: "italic",
-  },
-  taskItemSelected: {
-    borderWidth: 1,
-    borderColor: "#6c63ff",
-    backgroundColor: "#1f1f35",
-  },
-  taskListHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  bulkDeleteButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: "#ff6b6b22",
-    borderWidth: 1,
-    borderColor: "#ff6b6b44",
-  },
-  bulkDeleteText: {
-    color: "#ff6b6b",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  searchInput: {
-    backgroundColor: "#1a1a2e",
-    color: "#ffffff",
-    fontSize: 14,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: "#3a3a55",
-    marginBottom: 10,
-    width: "100%",
-  },
-  filterRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 10,
-    flexWrap: "wrap",
-  },
-  filterChip: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: "#1a1a2e",
-    borderWidth: 1,
-    borderColor: "#3a3a55",
-  },
-  filterChipActive: {
-    backgroundColor: "#6c63ff22",
-    borderColor: "#6c63ff",
-  },
-  filterChipText: {
-    fontSize: 12,
-    color: "#8888aa",
-    fontWeight: "600",
-  },
-  filterChipTextActive: {
-    color: "#6c63ff",
-  },
-  filterSpacer: {
-    flex: 1,
-  },
-  sortChip: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: "#1a1a2e",
-    borderWidth: 1,
-    borderColor: "#3a3a55",
-  },
-  sortChipActive: {
-    backgroundColor: "#2a2a40",
-    borderColor: "#8888aa",
-  },
-  sortChipText: {
-    fontSize: 11,
-    color: "#555570",
-    fontWeight: "600",
-  },
-  sortChipTextActive: {
-    color: "#aaaacc",
-  },
-  emptyText: {
-    color: "#555570",
-    fontSize: 13,
-    textAlign: "center",
-    marginTop: 12,
-  },
-  settingsToggle: {
-    alignSelf: "flex-end",
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#3a3a55",
-    marginBottom: 8,
-  },
-  settingsToggleText: {
-    color: "#8888aa",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  settingsPanel: {
-    width: "100%",
-    maxWidth: 400,
-    backgroundColor: "#1a1a2e",
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    gap: 10,
-  },
-  settingsSectionLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#8888aa",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  settingsInput: {
-    backgroundColor: "#2a2a40",
-    color: "#ffffff",
-    fontSize: 15,
-    borderRadius: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: "#3a3a55",
-    width: 100,
-  },
-  settingsDangerButton: {
-    marginTop: 4,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#ff6b6b44",
-    alignItems: "center",
-  },
-  settingsDangerText: {
-    color: "#ff6b6b",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  statsContainer: {
-    marginTop: 32,
-    width: "100%",
-    maxWidth: 400,
-  },
-  statsTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#8888aa",
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
-    marginBottom: 12,
-  },
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: "#1a1a2e",
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  statValue: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#ffffff",
-  },
-  statLabel: {
-    fontSize: 11,
-    color: "#8888aa",
-    fontWeight: "600",
-    marginTop: 4,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-  },
-  taskActions: {
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-  },
-  taskBadgeRow: {
-    flexDirection: "row",
-    gap: 6,
-    marginTop: 6,
-    flexWrap: "wrap",
-  },
-  categoryBadge: {
-    backgroundColor: "#2a2a40",
-    borderRadius: 6,
-    paddingVertical: 2,
-    paddingHorizontal: 8,
-  },
-  categoryBadgeText: {
-    fontSize: 11,
-    color: "#8888aa",
-    fontWeight: "600",
-  },
-  priorityBadge: {
-    borderRadius: 6,
-    borderWidth: 1,
-    paddingVertical: 2,
-    paddingHorizontal: 8,
-  },
-  priorityBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  taskShareButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#4caf5044",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  taskShareText: {
-    color: "#4caf50",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  taskEditButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#8888aa44",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  taskEditText: {
-    color: "#8888aa",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  taskPostponeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#6c63ff44",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  taskPostponeText: {
-    color: "#6c63ff",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-});
+    // Saved Tasks
+    taskListContainer: {
+      marginTop: 32,
+      width: "100%",
+      maxWidth: 400,
+    },
+    taskListTitle: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: t.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 1.5,
+      marginBottom: 12,
+    },
+    taskItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: t.surface,
+      borderRadius: 10,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      marginBottom: 6,
+    },
+    taskInfo: {
+      flex: 1,
+    },
+    taskTitle: {
+      fontSize: 15,
+      fontWeight: "700",
+      color: t.text,
+      marginBottom: 4,
+    },
+    taskMeta: {
+      fontSize: 12,
+      color: t.textMuted,
+      letterSpacing: 0.5,
+    },
+    taskDeleteButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.danger + "44",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    taskDeleteText: {
+      color: t.danger,
+      fontSize: 14,
+      fontWeight: "700",
+    },
+    taskItemDone: {
+      opacity: 0.6,
+    },
+    checkbox: {
+      width: 22,
+      height: 22,
+      borderRadius: 6,
+      borderWidth: 2,
+      borderColor: t.border,
+      marginRight: 12,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    checkboxDone: {
+      backgroundColor: t.accent,
+      borderColor: t.accent,
+    },
+    checkmark: {
+      color: "#ffffff",
+      fontSize: 13,
+      fontWeight: "700",
+    },
+    taskTitleDone: {
+      textDecorationLine: "line-through",
+      color: t.textDim,
+    },
+    taskNotes: {
+      fontSize: 12,
+      color: t.textDim,
+      marginTop: 4,
+      fontStyle: "italic",
+    },
+    taskItemSelected: {
+      borderWidth: 1,
+      borderColor: t.accent,
+      backgroundColor: t.surfaceSelected,
+    },
+    taskListHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 10,
+    },
+    bulkDeleteButton: {
+      paddingVertical: 4,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      backgroundColor: t.danger + "22",
+      borderWidth: 1,
+      borderColor: t.danger + "44",
+    },
+    bulkDeleteText: {
+      color: t.danger,
+      fontSize: 12,
+      fontWeight: "700",
+    },
+    searchInput: {
+      backgroundColor: t.surface,
+      color: t.text,
+      fontSize: 14,
+      borderRadius: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      borderWidth: 1,
+      borderColor: t.border,
+      marginBottom: 10,
+      width: "100%",
+    },
+    filterRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      marginBottom: 10,
+      flexWrap: "wrap",
+    },
+    filterChip: {
+      paddingVertical: 4,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    filterChipActive: {
+      backgroundColor: t.accent + "22",
+      borderColor: t.accent,
+    },
+    filterChipText: {
+      fontSize: 12,
+      color: t.textMuted,
+      fontWeight: "600",
+    },
+    filterChipTextActive: {
+      color: t.accent,
+    },
+    filterSpacer: {
+      flex: 1,
+    },
+    sortChip: {
+      paddingVertical: 4,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    sortChipActive: {
+      backgroundColor: t.surface2,
+      borderColor: t.textMuted,
+    },
+    sortChipText: {
+      fontSize: 11,
+      color: t.textDim2,
+      fontWeight: "600",
+    },
+    sortChipTextActive: {
+      color: t.text,
+    },
+    emptyText: {
+      color: t.textDim2,
+      fontSize: 13,
+      textAlign: "center",
+      marginTop: 12,
+    },
+
+    // Settings
+    settingsToggle: {
+      alignSelf: "flex-end",
+      paddingVertical: 4,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.border,
+      marginBottom: 8,
+    },
+    settingsToggleText: {
+      color: t.textMuted,
+      fontSize: 12,
+      fontWeight: "600",
+    },
+    settingsPanel: {
+      width: "100%",
+      maxWidth: 400,
+      backgroundColor: t.surface,
+      borderRadius: 16,
+      padding: 16,
+      marginBottom: 16,
+      gap: 10,
+    },
+    settingsSectionLabel: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: t.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 1,
+    },
+    settingsInput: {
+      backgroundColor: t.surface2,
+      color: t.text,
+      fontSize: 15,
+      borderRadius: 10,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: t.border,
+      width: 100,
+    },
+    themeRow: {
+      flexDirection: "row",
+      gap: 8,
+    },
+    themeChip: {
+      paddingVertical: 8,
+      paddingHorizontal: 16,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: t.border,
+      backgroundColor: t.surface2,
+    },
+    themeChipActive: {
+      backgroundColor: t.accent + "22",
+      borderColor: t.accent,
+    },
+    themeChipText: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: t.textMuted,
+    },
+    themeChipTextActive: {
+      color: t.accent,
+    },
+    settingsActionButton: {
+      paddingVertical: 10,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: t.border,
+      alignItems: "center",
+    },
+    settingsActionText: {
+      color: t.text,
+      fontSize: 13,
+      fontWeight: "600",
+    },
+    settingsDangerButton: {
+      paddingVertical: 10,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: t.danger + "44",
+      alignItems: "center",
+    },
+    settingsDangerText: {
+      color: t.danger,
+      fontSize: 13,
+      fontWeight: "600",
+    },
+
+    // Statistics
+    statsContainer: {
+      marginTop: 32,
+      width: "100%",
+      maxWidth: 400,
+    },
+    statsTitle: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: t.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 1.5,
+      marginBottom: 12,
+    },
+    statsRow: {
+      flexDirection: "row",
+      gap: 8,
+    },
+    statCard: {
+      flex: 1,
+      backgroundColor: t.surface,
+      borderRadius: 12,
+      paddingVertical: 14,
+      alignItems: "center",
+    },
+    statValue: {
+      fontSize: 22,
+      fontWeight: "800",
+      color: t.text,
+    },
+    statLabel: {
+      fontSize: 10,
+      color: t.textMuted,
+      fontWeight: "600",
+      marginTop: 4,
+      textTransform: "uppercase",
+      letterSpacing: 0.8,
+      textAlign: "center",
+    },
+    categoryStatsContainer: {
+      marginTop: 12,
+      backgroundColor: t.surface,
+      borderRadius: 12,
+      padding: 14,
+      gap: 10,
+    },
+    categoryStatsTitle: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: t.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 1,
+      marginBottom: 4,
+    },
+    categoryStatRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    categoryStatName: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: t.text,
+      width: 80,
+    },
+    categoryBarTrack: {
+      flex: 1,
+      height: 6,
+      backgroundColor: t.surface2,
+      borderRadius: 3,
+      overflow: "hidden",
+    },
+    categoryBarFill: {
+      height: 6,
+      backgroundColor: t.accent,
+      borderRadius: 3,
+    },
+    categoryStatCount: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: t.textMuted,
+      width: 20,
+      textAlign: "right",
+    },
+
+    // Task action buttons
+    taskActions: {
+      flexDirection: "row",
+      gap: 8,
+      alignItems: "center",
+    },
+    taskBadgeRow: {
+      flexDirection: "row",
+      gap: 6,
+      marginTop: 6,
+      flexWrap: "wrap",
+    },
+    categoryBadge: {
+      backgroundColor: t.surface2,
+      borderRadius: 6,
+      paddingVertical: 2,
+      paddingHorizontal: 8,
+    },
+    categoryBadgeText: {
+      fontSize: 11,
+      color: t.textMuted,
+      fontWeight: "600",
+    },
+    priorityBadge: {
+      borderRadius: 6,
+      borderWidth: 1,
+      paddingVertical: 2,
+      paddingHorizontal: 8,
+    },
+    priorityBadgeText: {
+      fontSize: 11,
+      fontWeight: "700",
+    },
+    taskShareButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: "#4caf5044",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    taskShareText: {
+      color: "#4caf50",
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    taskEditButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.textMuted + "44",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    taskEditText: {
+      color: t.textMuted,
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    taskPostponeButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.accent + "44",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    taskPostponeText: {
+      color: t.accent,
+      fontSize: 16,
+      fontWeight: "700",
+    },
+  });
+}

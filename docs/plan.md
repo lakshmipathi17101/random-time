@@ -74,14 +74,14 @@
 
 ---
 
-## Phase 6: Settings & Sharing
+## Phase 6: Settings & Sharing (Complete)
 > User preferences and data portability
 
-- [ ] Settings screen (default reminder time, theme, time format, sound)
-- [ ] Dark/light theme toggle (user-selectable, persisted)
-- [ ] Share task (share generated time or task as text / calendar invite)
-- [ ] Export tasks as JSON (backup to Files app / Google Drive)
-- [ ] Statistics screen (tasks completed, streaks, average reminder time)
+- [x] Settings screen (default reminder time, theme, time format, sound)
+- [x] Dark/light theme toggle (user-selectable, persisted)
+- [x] Share task (share generated time or task as text / calendar invite)
+- [x] Export tasks as JSON (backup to Files app / Google Drive)
+- [x] Statistics screen (tasks completed, streak 🔥, completion rate, category breakdown)
 
 ---
 
