@@ -28,7 +28,8 @@ export type SettingKey =
   | "max_h"
   | "max_m"
   | "max_s"
-  | "default_reminder";
+  | "default_reminder"
+  | "theme";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 
