@@ -17,6 +17,8 @@ import { StatusBar } from "expo-status-bar";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import AddEventModal from "./AddEventModal";
+import OnboardingScreen from "./OnboardingScreen";
+import PresetsModal from "./PresetsModal";
 import {
   getDb,
   getTasks,
@@ -28,8 +30,21 @@ import {
   upsertSetting,
   Task,
   TaskPriority,
+  WeightedRange,
+  ExcludedBlock,
+  PresetConfig,
 } from "./db";
-import { cancelNotification, setupNotificationResponseHandler } from "./notificationService";
+import {
+  cancelNotification,
+  setupNotificationResponseHandler,
+  scheduleSnoozeAlarm,
+} from "./notificationService";
+import {
+  generateWeightedRandom,
+  hmsToSeconds,
+  secondsToHms,
+  secondsToLabel,
+} from "./weightedRandom";
 
 const MAX_HISTORY = 10;
 
@@ -39,21 +54,6 @@ function pad(n: number): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
-}
-
-function timeToSeconds(h: number, m: number, s: number): number {
-  return h * 3600 + m * 60 + s;
-}
-
-function secondsToTime(totalSeconds: number): {
-  h: number;
-  m: number;
-  s: number;
-} {
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  return { h, m, s };
 }
 
 function formatTime24(h: number, m: number, s: number): string {
@@ -165,6 +165,15 @@ function TaskListItem({ task, is24h, onDelete, onToggleDone, onPostpone, onEdit,
   const timeLabel = is24h ? formatTime24(h, m, s) : formatTime12(h, m, s);
   const isDone = task.status === "done";
 
+  const recurrLabel =
+    task.recurrence_type === "daily"
+      ? "↻ Daily"
+      : task.recurrence_type === "weekly"
+      ? "↻ Weekly"
+      : task.recurrence_type === "custom" && task.recurrence_interval != null
+      ? `↻ Every ${task.recurrence_interval}d`
+      : null;
+
   return (
     <TouchableOpacity
       onLongPress={() => onLongPress(task)}
@@ -184,22 +193,25 @@ function TaskListItem({ task, is24h, onDelete, onToggleDone, onPostpone, onEdit,
         <Text style={styles.taskMeta}>
           {eventDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {timeLabel} · -{task.reminder_minutes} min reminder
         </Text>
-        {(task.category || task.priority) && (
-          <View style={styles.taskBadgeRow}>
-            {task.category && (
-              <View style={styles.categoryBadge}>
-                <Text style={styles.categoryBadgeText}>{task.category}</Text>
-              </View>
-            )}
-            {task.priority && (
-              <View style={[styles.priorityBadge, { borderColor: priorityColor(task.priority) }]}>
-                <Text style={[styles.priorityBadgeText, { color: priorityColor(task.priority) }]}>
-                  {task.priority}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
+        <View style={styles.taskBadgeRow}>
+          {task.category && (
+            <View style={styles.categoryBadge}>
+              <Text style={styles.categoryBadgeText}>{task.category}</Text>
+            </View>
+          )}
+          {task.priority && (
+            <View style={[styles.priorityBadge, { borderColor: priorityColor(task.priority) }]}>
+              <Text style={[styles.priorityBadgeText, { color: priorityColor(task.priority) }]}>
+                {task.priority}
+              </Text>
+            </View>
+          )}
+          {recurrLabel && (
+            <View style={styles.recurrBadge}>
+              <Text style={styles.recurrBadgeText}>{recurrLabel}</Text>
+            </View>
+          )}
+        </View>
         {task.notes ? (
           <Text style={styles.taskNotes} numberOfLines={2}>
             {task.notes}
@@ -207,33 +219,68 @@ function TaskListItem({ task, is24h, onDelete, onToggleDone, onPostpone, onEdit,
         ) : null}
       </View>
       <View style={styles.taskActions}>
-        <TouchableOpacity
-          style={styles.taskShareButton}
-          onPress={() => onShare(task)}
-        >
+        <TouchableOpacity style={styles.taskShareButton} onPress={() => onShare(task)}>
           <Text style={styles.taskShareText}>↑</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.taskEditButton}
-          onPress={() => onEdit(task)}
-        >
+        <TouchableOpacity style={styles.taskEditButton} onPress={() => onEdit(task)}>
           <Text style={styles.taskEditText}>✎</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.taskPostponeButton}
-          onPress={() => onPostpone(task)}
-        >
+        <TouchableOpacity style={styles.taskPostponeButton} onPress={() => onPostpone(task)}>
           <Text style={styles.taskPostponeText}>↻</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.taskDeleteButton}
-          onPress={() => onDelete(task)}
-        >
+        <TouchableOpacity style={styles.taskDeleteButton} onPress={() => onDelete(task)}>
           <Text style={styles.taskDeleteText}>✕</Text>
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
+}
+
+// ─── Small inline time picker for excluded blocks / weighted ranges ────────────
+function MiniTimePicker({
+  label,
+  seconds,
+  onChange,
+}: {
+  label: string;
+  seconds: number;
+  onChange: (s: number) => void;
+}) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+
+  return (
+    <View style={styles.miniTimeWrap}>
+      <Text style={styles.miniTimeLabel}>{label}</Text>
+      <View style={styles.miniTimeRow}>
+        <TextInput
+          style={styles.miniTimeInput}
+          keyboardType="number-pad"
+          maxLength={2}
+          value={String(h).padStart(2, "0")}
+          onChangeText={(v) => {
+            const hh = clamp(parseInt(v, 10) || 0, 0, 23);
+            onChange(hh * 3600 + m * 60);
+          }}
+        />
+        <Text style={styles.miniTimeColon}>:</Text>
+        <TextInput
+          style={styles.miniTimeInput}
+          keyboardType="number-pad"
+          maxLength={2}
+          value={String(m).padStart(2, "0")}
+          onChangeText={(v) => {
+            const mm = clamp(parseInt(v, 10) || 0, 0, 59);
+            onChange(h * 3600 + mm * 60);
+          }}
+        />
+      </View>
+    </View>
+  );
+}
+
+function generateId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 export default function App() {
@@ -263,6 +310,15 @@ export default function App() {
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [defaultReminder, setDefaultReminder] = useState("10");
 
+  // Phase 7 — advanced generation
+  const [weightedRanges, setWeightedRanges] = useState<WeightedRange[]>([]);
+  const [excludedBlocks, setExcludedBlocks] = useState<ExcludedBlock[]>([]);
+  const [advancedVisible, setAdvancedVisible] = useState(false);
+  const [presetsVisible, setPresetsVisible] = useState(false);
+
+  // Phase 9 — onboarding
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null); // null = loading
+
   const isMountedRef = useRef(false);
 
   const loadTasks = useCallback(async () => {
@@ -282,8 +338,11 @@ export default function App() {
       const savedMaxH = await getSetting("max_h");
       const savedMaxM = await getSetting("max_m");
       const savedMaxS = await getSetting("max_s");
-
       const savedDefaultReminder = await getSetting("default_reminder");
+      const savedOnboarding = await getSetting("onboarding_complete");
+      const savedWeights = await getSetting("weighted_ranges");
+      const savedExcluded = await getSetting("excluded_blocks");
+
       if (saved24h !== null) setIs24h(saved24h === "true");
       if (savedMinH !== null) setMinH(savedMinH);
       if (savedMinM !== null) setMinM(savedMinM);
@@ -292,6 +351,14 @@ export default function App() {
       if (savedMaxM !== null) setMaxM(savedMaxM);
       if (savedMaxS !== null) setMaxS(savedMaxS);
       if (savedDefaultReminder !== null) setDefaultReminder(savedDefaultReminder);
+      if (savedWeights) {
+        try { setWeightedRanges(JSON.parse(savedWeights)); } catch { /* ignore */ }
+      }
+      if (savedExcluded) {
+        try { setExcludedBlocks(JSON.parse(savedExcluded)); } catch { /* ignore */ }
+      }
+
+      setOnboardingDone(savedOnboarding === "true");
 
       await loadTasks();
 
@@ -302,7 +369,7 @@ export default function App() {
     init();
   }, [loadTasks]);
 
-  // Notification action handlers (Done / Postpone from tray)
+  // Notification action handlers (Done / Postpone / Snooze from tray)
   useEffect(() => {
     const cleanup = setupNotificationResponseHandler(
       async (taskId) => {
@@ -312,15 +379,10 @@ export default function App() {
       async (taskId) => {
         const task = (await getTasks()).find((t) => t.id === taskId);
         if (!task) return;
-        const minTotal = timeToSeconds(
-          parseVal(minH, 23), parseVal(minM, 59), parseVal(minS, 59)
-        );
-        const maxTotal = timeToSeconds(
-          parseVal(maxH, 23), parseVal(maxM, 59), parseVal(maxS, 59)
-        );
-        const range = Math.max(maxTotal - minTotal, 0);
-        const randomTotal = Math.floor(Math.random() * (range + 1)) + minTotal;
-        const { h, m, s } = secondsToTime(randomTotal);
+        const minTotal = hmsToSeconds(parseVal(minH, 23), parseVal(minM, 59), parseVal(minS, 59));
+        const maxTotal = hmsToSeconds(parseVal(maxH, 23), parseVal(maxM, 59), parseVal(maxS, 59));
+        const randomTotal = generateWeightedRandom(minTotal, maxTotal, weightedRanges, excludedBlocks);
+        const { h, m, s } = secondsToHms(randomTotal);
         const orig = new Date(task.event_date);
         const newDate = new Date(orig.getFullYear(), orig.getMonth(), orig.getDate(), h, m, s);
         if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
@@ -330,10 +392,19 @@ export default function App() {
         const alarmId = await scheduleAlarm(task.title, newDate, task.id);
         await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
         await loadTasks();
+      },
+      async (taskId) => {
+        // Snooze: reschedule alarm 15 min from now
+        const task = (await getTasks()).find((t) => t.id === taskId);
+        if (!task) return;
+        if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
+        const newAlarmId = await scheduleSnoozeAlarm(task.title, task.id);
+        await updateTaskTime(task.id, task.event_date, newAlarmId, task.reminder_notification_id);
+        await loadTasks();
       }
     );
     return cleanup;
-  }, [loadTasks, minH, minM, minS, maxH, maxM, maxS]);
+  }, [loadTasks, minH, minM, minS, maxH, maxM, maxS, weightedRanges, excludedBlocks]);
 
   // Persist format toggle
   useEffect(() => {
@@ -363,6 +434,18 @@ export default function App() {
     upsertSetting("default_reminder", defaultReminder);
   }, [defaultReminder]);
 
+  // Persist weighted ranges
+  useEffect(() => {
+    if (!isMountedRef.current) return;
+    upsertSetting("weighted_ranges", JSON.stringify(weightedRanges));
+  }, [weightedRanges]);
+
+  // Persist excluded blocks
+  useEffect(() => {
+    if (!isMountedRef.current) return;
+    upsertSetting("excluded_blocks", JSON.stringify(excludedBlocks));
+  }, [excludedBlocks]);
+
   const parseVal = (v: string, max: number): number => {
     const n = parseInt(v, 10);
     if (isNaN(n)) return 0;
@@ -380,13 +463,12 @@ export default function App() {
     const minHours = parseVal(minH, 23);
     const minMinutes = parseVal(minM, 59);
     const minSeconds = parseVal(minS, 59);
-
     const maxHours = parseVal(maxH, 23);
     const maxMinutes = parseVal(maxM, 59);
     const maxSeconds = parseVal(maxS, 59);
 
-    const minTotal = timeToSeconds(minHours, minMinutes, minSeconds);
-    const maxTotal = timeToSeconds(maxHours, maxMinutes, maxSeconds);
+    const minTotal = hmsToSeconds(minHours, minMinutes, minSeconds);
+    const maxTotal = hmsToSeconds(maxHours, maxMinutes, maxSeconds);
 
     if (minTotal > maxTotal) {
       setError("Min time must be less than or equal to max time");
@@ -401,9 +483,8 @@ export default function App() {
 
     const generated: { h: number; m: number; s: number }[] = [];
     for (let i = 0; i < generateCount; i++) {
-      const randomTotal =
-        Math.floor(Math.random() * (maxTotal - minTotal + 1)) + minTotal;
-      generated.push(secondsToTime(randomTotal));
+      const randomTotal = generateWeightedRandom(minTotal, maxTotal, weightedRanges, excludedBlocks);
+      generated.push(secondsToHms(randomTotal));
     }
     setResults(generated);
 
@@ -534,15 +615,10 @@ export default function App() {
 
   const handlePostpone = useCallback(
     async (task: Task) => {
-      const minTotal = timeToSeconds(
-        parseVal(minH, 23), parseVal(minM, 59), parseVal(minS, 59)
-      );
-      const maxTotal = timeToSeconds(
-        parseVal(maxH, 23), parseVal(maxM, 59), parseVal(maxS, 59)
-      );
-      const range = Math.max(maxTotal - minTotal, 0);
-      const randomTotal = Math.floor(Math.random() * (range + 1)) + minTotal;
-      const { h, m, s } = secondsToTime(randomTotal);
+      const minTotal = hmsToSeconds(parseVal(minH, 23), parseVal(minM, 59), parseVal(minS, 59));
+      const maxTotal = hmsToSeconds(parseVal(maxH, 23), parseVal(maxM, 59), parseVal(maxS, 59));
+      const randomTotal = generateWeightedRandom(minTotal, maxTotal, weightedRanges, excludedBlocks);
+      const { h, m, s } = secondsToHms(randomTotal);
 
       const orig = new Date(task.event_date);
       const newDate = new Date(orig.getFullYear(), orig.getMonth(), orig.getDate(), h, m, s);
@@ -562,7 +638,7 @@ export default function App() {
       await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
       await loadTasks();
     },
-    [minH, minM, minS, maxH, maxM, maxS, loadTasks]
+    [minH, minM, minS, maxH, maxM, maxS, weightedRanges, excludedBlocks, loadTasks]
   );
 
   const handleToggleDone = useCallback(
@@ -601,6 +677,88 @@ export default function App() {
     },
     [loadTasks]
   );
+
+  // ── Phase 7: Excluded block helpers ──────────────────────────────────────────
+  const addExcludedBlock = () => {
+    const block: ExcludedBlock = {
+      id: generateId(),
+      label: "Lunch",
+      startSeconds: 12 * 3600,
+      endSeconds: 13 * 3600,
+    };
+    setExcludedBlocks((prev) => [...prev, block]);
+  };
+
+  const updateExcludedBlock = (id: string, patch: Partial<ExcludedBlock>) => {
+    setExcludedBlocks((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, ...patch } : b))
+    );
+  };
+
+  const removeExcludedBlock = (id: string) => {
+    setExcludedBlocks((prev) => prev.filter((b) => b.id !== id));
+  };
+
+  // ── Phase 7: Weighted range helpers ──────────────────────────────────────────
+  const addWeightedRange = () => {
+    const range: WeightedRange = {
+      id: generateId(),
+      label: "Work Hours",
+      startSeconds: 9 * 3600,
+      endSeconds: 17 * 3600,
+      weight: 3,
+    };
+    setWeightedRanges((prev) => [...prev, range]);
+  };
+
+  const updateWeightedRange = (id: string, patch: Partial<WeightedRange>) => {
+    setWeightedRanges((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, ...patch } : r))
+    );
+  };
+
+  const removeWeightedRange = (id: string) => {
+    setWeightedRanges((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  // ── Phase 7: Preset config snapshot ──────────────────────────────────────────
+  const currentPresetConfig: PresetConfig = {
+    minH, minM, minS,
+    maxH, maxM, maxS,
+    weights: weightedRanges,
+    excluded: excludedBlocks,
+  };
+
+  const handleLoadPreset = (config: PresetConfig) => {
+    setMinH(config.minH); setMinM(config.minM); setMinS(config.minS);
+    setMaxH(config.maxH); setMaxM(config.maxM); setMaxS(config.maxS);
+    setWeightedRanges(config.weights ?? []);
+    setExcludedBlocks(config.excluded ?? []);
+  };
+
+  // ── Phase 9: Onboarding ───────────────────────────────────────────────────────
+  const handleOnboardingComplete = useCallback(async () => {
+    await upsertSetting("onboarding_complete", "true");
+    setOnboardingDone(true);
+  }, []);
+
+  // Loading state — wait for DB init
+  if (onboardingDone === null) {
+    return (
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.container} />
+      </SafeAreaProvider>
+    );
+  }
+
+  // Onboarding gate
+  if (!onboardingDone) {
+    return (
+      <SafeAreaProvider>
+        <OnboardingScreen onComplete={handleOnboardingComplete} />
+      </SafeAreaProvider>
+    );
+  }
 
   return (
     <SafeAreaProvider>
@@ -649,46 +807,130 @@ export default function App() {
 
           {/* Format Toggle */}
           <TouchableOpacity style={styles.toggleRow} onPress={toggleFormat}>
-            <Text style={[styles.toggleOption, is24h && styles.toggleActive]}>
-              24H
-            </Text>
+            <Text style={[styles.toggleOption, is24h && styles.toggleActive]}>24H</Text>
             <View style={styles.toggleTrack}>
-              <View
-                style={[
-                  styles.toggleThumb,
-                  !is24h && styles.toggleThumbRight,
-                ]}
-              />
+              <View style={[styles.toggleThumb, !is24h && styles.toggleThumbRight]} />
             </View>
-            <Text style={[styles.toggleOption, !is24h && styles.toggleActive]}>
-              12H
-            </Text>
+            <Text style={[styles.toggleOption, !is24h && styles.toggleActive]}>12H</Text>
           </TouchableOpacity>
 
           {/* Range Card */}
           <View style={styles.card}>
             <TimeInput
               label="From"
-              hours={minH}
-              minutes={minM}
-              seconds={minS}
-              onChangeHours={setMinH}
-              onChangeMinutes={setMinM}
-              onChangeSeconds={setMinS}
+              hours={minH} minutes={minM} seconds={minS}
+              onChangeHours={setMinH} onChangeMinutes={setMinM} onChangeSeconds={setMinS}
             />
-
             <View style={styles.divider} />
-
             <TimeInput
               label="To"
-              hours={maxH}
-              minutes={maxM}
-              seconds={maxS}
-              onChangeHours={setMaxH}
-              onChangeMinutes={setMaxM}
-              onChangeSeconds={setMaxS}
+              hours={maxH} minutes={maxM} seconds={maxS}
+              onChangeHours={setMaxH} onChangeMinutes={setMaxM} onChangeSeconds={setMaxS}
             />
           </View>
+
+          {/* ── Phase 7: Advanced generation panel ─────────────────────── */}
+          <TouchableOpacity
+            style={styles.advancedToggle}
+            onPress={() => setAdvancedVisible((v) => !v)}
+          >
+            <Text style={styles.advancedToggleText}>
+              {advancedVisible ? "▲ Advanced" : "▼ Advanced"}
+              {(weightedRanges.length > 0 || excludedBlocks.length > 0) ? "  ●" : ""}
+            </Text>
+          </TouchableOpacity>
+
+          {advancedVisible && (
+            <View style={styles.advancedPanel}>
+              {/* Presets */}
+              <TouchableOpacity
+                style={styles.presetsButton}
+                onPress={() => setPresetsVisible(true)}
+              >
+                <Text style={styles.presetsButtonText}>⚙ Manage Presets</Text>
+              </TouchableOpacity>
+
+              {/* Excluded Blocks */}
+              <Text style={styles.advancedSectionLabel}>Excluded Time Blocks</Text>
+              <Text style={styles.advancedHint}>Times falling in these blocks are skipped.</Text>
+              {excludedBlocks.map((block) => (
+                <View key={block.id} style={styles.blockRow}>
+                  <TextInput
+                    style={styles.blockLabelInput}
+                    value={block.label}
+                    onChangeText={(v) => updateExcludedBlock(block.id, { label: v })}
+                    placeholder="Label"
+                    placeholderTextColor="#666680"
+                  />
+                  <MiniTimePicker
+                    label="From"
+                    seconds={block.startSeconds}
+                    onChange={(s) => updateExcludedBlock(block.id, { startSeconds: s })}
+                  />
+                  <MiniTimePicker
+                    label="To"
+                    seconds={block.endSeconds}
+                    onChange={(s) => updateExcludedBlock(block.id, { endSeconds: s })}
+                  />
+                  <TouchableOpacity
+                    style={styles.removeButton}
+                    onPress={() => removeExcludedBlock(block.id)}
+                  >
+                    <Text style={styles.removeButtonText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <TouchableOpacity style={styles.addButton} onPress={addExcludedBlock}>
+                <Text style={styles.addButtonText}>+ Add Block</Text>
+              </TouchableOpacity>
+
+              {/* Weighted Ranges */}
+              <Text style={[styles.advancedSectionLabel, { marginTop: 16 }]}>Weighted Ranges</Text>
+              <Text style={styles.advancedHint}>Higher weight = more likely to generate in that range.</Text>
+              {weightedRanges.map((range) => (
+                <View key={range.id} style={styles.blockRow}>
+                  <TextInput
+                    style={styles.blockLabelInput}
+                    value={range.label}
+                    onChangeText={(v) => updateWeightedRange(range.id, { label: v })}
+                    placeholder="Label"
+                    placeholderTextColor="#666680"
+                  />
+                  <MiniTimePicker
+                    label="From"
+                    seconds={range.startSeconds}
+                    onChange={(s) => updateWeightedRange(range.id, { startSeconds: s })}
+                  />
+                  <MiniTimePicker
+                    label="To"
+                    seconds={range.endSeconds}
+                    onChange={(s) => updateWeightedRange(range.id, { endSeconds: s })}
+                  />
+                  <View style={styles.weightWrap}>
+                    <Text style={styles.weightLabel}>×</Text>
+                    <TextInput
+                      style={styles.weightInput}
+                      keyboardType="number-pad"
+                      maxLength={2}
+                      value={String(range.weight)}
+                      onChangeText={(v) =>
+                        updateWeightedRange(range.id, { weight: Math.max(1, parseInt(v, 10) || 1) })
+                      }
+                    />
+                  </View>
+                  <TouchableOpacity
+                    style={styles.removeButton}
+                    onPress={() => removeWeightedRange(range.id)}
+                  >
+                    <Text style={styles.removeButtonText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <TouchableOpacity style={styles.addButton} onPress={addWeightedRange}>
+                <Text style={styles.addButtonText}>+ Add Range</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {error && <Text style={styles.error}>{error}</Text>}
 
@@ -718,10 +960,7 @@ export default function App() {
               </Text>
               <Text style={styles.result}>{formatResult(r.h, r.m, r.s)}</Text>
               <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={styles.copyButton}
-                  onPress={() => copyToClipboard(idx)}
-                >
+                <TouchableOpacity style={styles.copyButton} onPress={() => copyToClipboard(idx)}>
                   <Text style={styles.copyButtonText}>
                     {copied && activeResultIdx === idx ? "Copied!" : "Copy"}
                   </Text>
@@ -750,6 +989,15 @@ export default function App() {
             onTaskSaved={loadTasks}
             editTask={editingTask}
             defaultReminderMin={parseInt(defaultReminder, 10) || 10}
+            existingTasks={tasks}
+          />
+
+          {/* Presets Modal */}
+          <PresetsModal
+            visible={presetsVisible}
+            onClose={() => setPresetsVisible(false)}
+            currentConfig={currentPresetConfig}
+            onLoadPreset={handleLoadPreset}
           />
 
           {/* History */}
@@ -766,19 +1014,9 @@ export default function App() {
                 scrollEnabled={false}
                 keyExtractor={(item) => item.id}
                 renderItem={({ item, index }) => (
-                  <View
-                    style={[
-                      styles.historyItem,
-                      index === 0 && styles.historyItemLatest,
-                    ]}
-                  >
+                  <View style={[styles.historyItem, index === 0 && styles.historyItemLatest]}>
                     <Text style={styles.historyIndex}>#{index + 1}</Text>
-                    <Text
-                      style={[
-                        styles.historyTime,
-                        index === 0 && styles.historyTimeLatest,
-                      ]}
-                    >
+                    <Text style={[styles.historyTime, index === 0 && styles.historyTimeLatest]}>
                       {formatResult(item.h, item.m, item.s)}
                     </Text>
                   </View>
@@ -790,22 +1028,15 @@ export default function App() {
           {/* Saved Tasks */}
           {dbReady && tasks.length > 0 && (
             <View style={styles.taskListContainer}>
-              {/* Header */}
               <View style={styles.taskListHeader}>
                 <Text style={styles.taskListTitle}>Saved Tasks</Text>
                 {selectedIds.size > 0 && (
-                  <TouchableOpacity
-                    style={styles.bulkDeleteButton}
-                    onPress={handleBulkDelete}
-                  >
-                    <Text style={styles.bulkDeleteText}>
-                      Delete {selectedIds.size}
-                    </Text>
+                  <TouchableOpacity style={styles.bulkDeleteButton} onPress={handleBulkDelete}>
+                    <Text style={styles.bulkDeleteText}>Delete {selectedIds.size}</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
-              {/* Search */}
               <TextInput
                 style={styles.searchInput}
                 placeholder="Search tasks…"
@@ -814,7 +1045,6 @@ export default function App() {
                 onChangeText={setSearchQuery}
               />
 
-              {/* Filter chips */}
               <View style={styles.filterRow}>
                 {(["all", "pending", "done"] as const).map((f) => (
                   <TouchableOpacity
@@ -951,371 +1181,483 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     backgroundColor: "#6c63ff",
+    alignSelf: "flex-start",
   },
   toggleThumbRight: {
     alignSelf: "flex-end",
   },
 
-  // Card
+  // Settings
+  settingsToggle: {
+    marginBottom: 8,
+    paddingVertical: 6,
+  },
+  settingsToggleText: {
+    color: "#6c63ff",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  settingsPanel: {
+    width: "100%",
+    backgroundColor: "#1a1a2e",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    gap: 12,
+  },
+  settingsSectionLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#8888aa",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  settingsInput: {
+    backgroundColor: "#2a2a40",
+    color: "#ffffff",
+    fontSize: 16,
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#3a3a55",
+    width: 100,
+  },
+  settingsDangerButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#ff6b6b33",
+    backgroundColor: "#ff6b6b11",
+    alignSelf: "flex-start",
+  },
+  settingsDangerText: {
+    color: "#ff6b6b",
+    fontWeight: "600",
+    fontSize: 13,
+  },
+
+  // Range card
   card: {
+    width: "100%",
     backgroundColor: "#1a1a2e",
     borderRadius: 20,
-    padding: 24,
-    width: "100%",
-    maxWidth: 400,
+    padding: 20,
+    marginBottom: 20,
+    gap: 16,
   },
   timeInputGroup: {
-    marginVertical: 8,
+    gap: 8,
   },
   label: {
-    fontSize: 14,
-    fontWeight: "600",
+    fontSize: 13,
+    fontWeight: "700",
     color: "#8888aa",
     textTransform: "uppercase",
     letterSpacing: 1.5,
-    marginBottom: 12,
   },
   timeRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 6,
   },
   inputWrapper: {
     alignItems: "center",
+    gap: 4,
   },
   input: {
+    width: 58,
     backgroundColor: "#2a2a40",
     color: "#ffffff",
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: "700",
     textAlign: "center",
-    width: 70,
-    height: 56,
     borderRadius: 12,
+    padding: 10,
     borderWidth: 2,
     borderColor: "#3a3a55",
   },
   inputLabel: {
     fontSize: 11,
-    color: "#666680",
-    marginTop: 4,
+    color: "#555570",
+    fontWeight: "600",
   },
   colon: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#6c63ff",
-    marginHorizontal: 6,
-    marginBottom: 16,
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#3a3a55",
+    marginBottom: 12,
   },
   divider: {
     height: 1,
     backgroundColor: "#2a2a40",
-    marginVertical: 16,
+    marginVertical: 4,
   },
+
+  // Advanced panel (Phase 7)
+  advancedToggle: {
+    marginBottom: 6,
+    paddingVertical: 6,
+    alignSelf: "flex-start",
+  },
+  advancedToggleText: {
+    color: "#8888aa",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  advancedPanel: {
+    width: "100%",
+    backgroundColor: "#1a1a2e",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    gap: 8,
+  },
+  presetsButton: {
+    backgroundColor: "#2a2a40",
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#3a3a55",
+    marginBottom: 4,
+  },
+  presetsButtonText: {
+    color: "#6c63ff",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  advancedSectionLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#8888aa",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginTop: 4,
+  },
+  advancedHint: {
+    fontSize: 11,
+    color: "#555570",
+    marginBottom: 4,
+  },
+  blockRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 8,
+    backgroundColor: "#2a2a40",
+    borderRadius: 12,
+    padding: 10,
+  },
+  blockLabelInput: {
+    flex: 1,
+    minWidth: 70,
+    backgroundColor: "#1a1a2e",
+    color: "#ffffff",
+    fontSize: 13,
+    borderRadius: 8,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: "#3a3a55",
+  },
+  removeButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  removeButtonText: {
+    color: "#ff6b6b",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  addButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#3a3a55",
+    alignSelf: "flex-start",
+  },
+  addButtonText: {
+    color: "#6c63ff",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+
+  // Mini time picker
+  miniTimeWrap: {
+    alignItems: "center",
+    gap: 2,
+  },
+  miniTimeLabel: {
+    fontSize: 10,
+    color: "#666680",
+    fontWeight: "600",
+  },
+  miniTimeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  miniTimeInput: {
+    width: 36,
+    backgroundColor: "#1a1a2e",
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "700",
+    textAlign: "center",
+    borderRadius: 6,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: "#3a3a55",
+  },
+  miniTimeColon: {
+    color: "#555570",
+    fontWeight: "800",
+    fontSize: 14,
+  },
+
+  // Weighted range weight input
+  weightWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  weightLabel: {
+    color: "#8888aa",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  weightInput: {
+    width: 36,
+    backgroundColor: "#1a1a2e",
+    color: "#6c63ff",
+    fontSize: 14,
+    fontWeight: "700",
+    textAlign: "center",
+    borderRadius: 6,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: "#6c63ff44",
+  },
+
+  // Error
   error: {
     color: "#ff6b6b",
     fontSize: 14,
-    marginTop: 16,
     textAlign: "center",
+    marginBottom: 12,
   },
 
+  // Generate row
   generateRow: {
     flexDirection: "row",
-    alignItems: "center",
     gap: 8,
-    marginTop: 28,
     width: "100%",
-    maxWidth: 400,
+    marginBottom: 16,
   },
   countChip: {
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
     backgroundColor: "#1a1a2e",
     borderWidth: 1,
     borderColor: "#3a3a55",
-    alignItems: "center",
     justifyContent: "center",
   },
   countChipActive: {
-    backgroundColor: "#6c63ff33",
+    backgroundColor: "#2a2a40",
     borderColor: "#6c63ff",
   },
   countChipText: {
-    color: "#8888aa",
-    fontSize: 15,
+    color: "#555570",
     fontWeight: "700",
+    fontSize: 14,
   },
   countChipTextActive: {
     color: "#6c63ff",
   },
-  buttonFlex: {
-    flex: 1,
-    marginTop: 0,
-  },
-  // Generate button
   button: {
     backgroundColor: "#6c63ff",
-    paddingVertical: 16,
-    paddingHorizontal: 48,
-    borderRadius: 16,
-    marginTop: 28,
-    width: "100%",
-    maxWidth: 400,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
     alignItems: "center",
-    shadowColor: "#6c63ff",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+  },
+  buttonFlex: {
+    flex: 1,
   },
   buttonText: {
     color: "#ffffff",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700",
   },
 
-  // Result
+  // Results
   resultContainer: {
-    marginTop: 32,
+    width: "100%",
+    backgroundColor: "#1a1a2e",
+    borderRadius: 20,
+    padding: 20,
     alignItems: "center",
+    marginBottom: 12,
   },
   resultLabel: {
-    fontSize: 14,
-    color: "#8888aa",
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#555570",
     textTransform: "uppercase",
     letterSpacing: 1.5,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   result: {
-    fontSize: 48,
+    fontSize: 52,
     fontWeight: "800",
-    color: "#6c63ff",
-    letterSpacing: 3,
+    color: "#ffffff",
+    letterSpacing: 2,
+    marginBottom: 16,
   },
   actionRow: {
     flexDirection: "row",
     gap: 12,
-    marginTop: 12,
   },
   copyButton: {
-    paddingVertical: 8,
+    backgroundColor: "#2a2a40",
+    borderRadius: 12,
+    paddingVertical: 10,
     paddingHorizontal: 20,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#6c63ff",
   },
   copyButtonText: {
-    color: "#6c63ff",
+    color: "#ffffff",
+    fontWeight: "700",
     fontSize: 14,
-    fontWeight: "600",
   },
   calendarButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 20,
-    borderRadius: 8,
     backgroundColor: "#6c63ff",
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
   },
   calendarButtonText: {
     color: "#ffffff",
+    fontWeight: "700",
     fontSize: 14,
-    fontWeight: "600",
   },
 
   // History
   historyContainer: {
-    marginTop: 32,
     width: "100%",
-    maxWidth: 400,
+    marginTop: 8,
+    marginBottom: 16,
   },
   historyHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: 8,
   },
   historyTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#8888aa",
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#ffffff",
   },
   clearText: {
     fontSize: 13,
-    color: "#ff6b6b",
+    color: "#6c63ff",
     fontWeight: "600",
   },
   historyItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#1a1a2e",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    backgroundColor: "#1a1a2e",
     marginBottom: 6,
+    gap: 12,
   },
   historyItemLatest: {
     borderWidth: 1,
-    borderColor: "#6c63ff33",
+    borderColor: "#6c63ff44",
   },
   historyIndex: {
-    fontSize: 13,
+    fontSize: 12,
     color: "#555570",
     fontWeight: "600",
-    width: 32,
+    width: 28,
   },
   historyTime: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700",
     color: "#aaaacc",
-    letterSpacing: 2,
+    fontVariant: ["tabular-nums"],
   },
   historyTimeLatest: {
-    color: "#6c63ff",
+    color: "#ffffff",
   },
 
-  // Saved Tasks
+  // Task list
   taskListContainer: {
-    marginTop: 32,
     width: "100%",
-    maxWidth: 400,
-  },
-  taskListTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#8888aa",
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
-    marginBottom: 12,
-  },
-  taskItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1a1a2e",
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginBottom: 6,
-  },
-  taskInfo: {
-    flex: 1,
-  },
-  taskTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#ffffff",
-    marginBottom: 4,
-  },
-  taskMeta: {
-    fontSize: 12,
-    color: "#8888aa",
-    letterSpacing: 0.5,
-  },
-  taskDeleteButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ff6b6b44",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  taskDeleteText: {
-    color: "#ff6b6b",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  taskItemDone: {
-    opacity: 0.6,
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: "#3a3a55",
-    marginRight: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxDone: {
-    backgroundColor: "#6c63ff",
-    borderColor: "#6c63ff",
-  },
-  checkmark: {
-    color: "#ffffff",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  taskTitleDone: {
-    textDecorationLine: "line-through",
-    color: "#666680",
-  },
-  taskNotes: {
-    fontSize: 12,
-    color: "#666680",
-    marginTop: 4,
-    fontStyle: "italic",
-  },
-  taskItemSelected: {
-    borderWidth: 1,
-    borderColor: "#6c63ff",
-    backgroundColor: "#1f1f35",
+    marginTop: 8,
+    marginBottom: 16,
   },
   taskListHeader: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 10,
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  taskListTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#ffffff",
   },
   bulkDeleteButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    borderRadius: 8,
     backgroundColor: "#ff6b6b22",
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: "#ff6b6b44",
   },
   bulkDeleteText: {
     color: "#ff6b6b",
-    fontSize: 12,
     fontWeight: "700",
+    fontSize: 13,
   },
   searchInput: {
     backgroundColor: "#1a1a2e",
     color: "#ffffff",
     fontSize: 14,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    borderRadius: 12,
+    padding: 12,
     borderWidth: 1,
-    borderColor: "#3a3a55",
-    marginBottom: 10,
-    width: "100%",
+    borderColor: "#2a2a40",
+    marginBottom: 12,
   },
   filterRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 10,
+    gap: 8,
+    marginBottom: 12,
     flexWrap: "wrap",
   },
   filterChip: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
     backgroundColor: "#1a1a2e",
     borderWidth: 1,
-    borderColor: "#3a3a55",
+    borderColor: "#2a2a40",
   },
   filterChipActive: {
-    backgroundColor: "#6c63ff22",
+    backgroundColor: "#2a2a40",
     borderColor: "#6c63ff",
   },
   filterChipText: {
+    color: "#555570",
     fontSize: 12,
-    color: "#8888aa",
     fontWeight: "600",
   },
   filterChipTextActive: {
@@ -1325,193 +1667,193 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   sortChip: {
-    paddingVertical: 4,
     paddingHorizontal: 10,
-    borderRadius: 8,
+    paddingVertical: 6,
+    borderRadius: 20,
     backgroundColor: "#1a1a2e",
     borderWidth: 1,
-    borderColor: "#3a3a55",
+    borderColor: "#2a2a40",
   },
   sortChipActive: {
     backgroundColor: "#2a2a40",
-    borderColor: "#8888aa",
+    borderColor: "#6c63ff",
   },
   sortChipText: {
-    fontSize: 11,
     color: "#555570",
+    fontSize: 12,
     fontWeight: "600",
   },
   sortChipTextActive: {
-    color: "#aaaacc",
+    color: "#6c63ff",
   },
-  emptyText: {
-    color: "#555570",
-    fontSize: 13,
-    textAlign: "center",
-    marginTop: 12,
-  },
-  settingsToggle: {
-    alignSelf: "flex-end",
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#3a3a55",
-    marginBottom: 8,
-  },
-  settingsToggleText: {
-    color: "#8888aa",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  settingsPanel: {
-    width: "100%",
-    maxWidth: 400,
+  taskItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
     backgroundColor: "#1a1a2e",
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
     gap: 10,
-  },
-  settingsSectionLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#8888aa",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  settingsInput: {
-    backgroundColor: "#2a2a40",
-    color: "#ffffff",
-    fontSize: 15,
-    borderRadius: 10,
-    padding: 10,
     borderWidth: 1,
+    borderColor: "#2a2a40",
+  },
+  taskItemDone: {
+    opacity: 0.55,
+  },
+  taskItemSelected: {
+    borderColor: "#6c63ff",
+    backgroundColor: "#1a1a3e",
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
     borderColor: "#3a3a55",
-    width: 100,
-  },
-  settingsDangerButton: {
-    marginTop: 4,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#ff6b6b44",
+    justifyContent: "center",
     alignItems: "center",
+    marginTop: 2,
   },
-  settingsDangerText: {
-    color: "#ff6b6b",
-    fontSize: 13,
-    fontWeight: "600",
+  checkboxDone: {
+    backgroundColor: "#6c63ff",
+    borderColor: "#6c63ff",
   },
-  statsContainer: {
-    marginTop: 32,
-    width: "100%",
-    maxWidth: 400,
-  },
-  statsTitle: {
+  checkmark: {
+    color: "#ffffff",
     fontSize: 14,
-    fontWeight: "600",
-    color: "#8888aa",
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
-    marginBottom: 12,
+    fontWeight: "700",
   },
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  statCard: {
+  taskInfo: {
     flex: 1,
-    backgroundColor: "#1a1a2e",
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
+    gap: 4,
   },
-  statValue: {
-    fontSize: 24,
-    fontWeight: "800",
+  taskTitle: {
+    fontSize: 15,
+    fontWeight: "700",
     color: "#ffffff",
   },
-  statLabel: {
-    fontSize: 11,
-    color: "#8888aa",
-    fontWeight: "600",
-    marginTop: 4,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
+  taskTitleDone: {
+    textDecorationLine: "line-through",
+    color: "#666680",
   },
-  taskActions: {
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
+  taskMeta: {
+    fontSize: 12,
+    color: "#666680",
   },
   taskBadgeRow: {
     flexDirection: "row",
     gap: 6,
-    marginTop: 6,
     flexWrap: "wrap",
   },
   categoryBadge: {
     backgroundColor: "#2a2a40",
     borderRadius: 6,
+    paddingHorizontal: 7,
     paddingVertical: 2,
-    paddingHorizontal: 8,
   },
   categoryBadgeText: {
     fontSize: 11,
-    color: "#8888aa",
+    color: "#aaaacc",
     fontWeight: "600",
   },
   priorityBadge: {
     borderRadius: 6,
-    borderWidth: 1,
+    paddingHorizontal: 7,
     paddingVertical: 2,
-    paddingHorizontal: 8,
+    borderWidth: 1,
   },
   priorityBadgeText: {
     fontSize: 11,
     fontWeight: "700",
   },
-  taskShareButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+  recurrBadge: {
+    backgroundColor: "#6c63ff22",
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
     borderWidth: 1,
-    borderColor: "#4caf5044",
-    alignItems: "center",
-    justifyContent: "center",
+    borderColor: "#6c63ff44",
+  },
+  recurrBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#6c63ff",
+  },
+  taskNotes: {
+    fontSize: 12,
+    color: "#555570",
+    fontStyle: "italic",
+    marginTop: 2,
+  },
+  taskActions: {
+    flexDirection: "column",
+    gap: 4,
+  },
+  taskShareButton: {
+    padding: 6,
   },
   taskShareText: {
-    color: "#4caf50",
-    fontSize: 15,
-    fontWeight: "700",
+    color: "#8888aa",
+    fontSize: 16,
   },
   taskEditButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#8888aa44",
-    alignItems: "center",
-    justifyContent: "center",
+    padding: 6,
   },
   taskEditText: {
     color: "#8888aa",
-    fontSize: 15,
-    fontWeight: "700",
+    fontSize: 16,
   },
   taskPostponeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#6c63ff44",
-    alignItems: "center",
-    justifyContent: "center",
+    padding: 6,
   },
   taskPostponeText: {
-    color: "#6c63ff",
+    color: "#f5a623",
+    fontSize: 16,
+  },
+  taskDeleteButton: {
+    padding: 6,
+  },
+  taskDeleteText: {
+    color: "#ff6b6b",
+    fontSize: 16,
+  },
+  emptyText: {
+    color: "#555570",
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 8,
+  },
+
+  // Stats
+  statsContainer: {
+    width: "100%",
+    backgroundColor: "#1a1a2e",
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 4,
+  },
+  statsTitle: {
     fontSize: 16,
     fontWeight: "700",
+    color: "#ffffff",
+    marginBottom: 12,
+  },
+  statsRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+  },
+  statCard: {
+    alignItems: "center",
+    gap: 4,
+  },
+  statValue: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: "#ffffff",
+  },
+  statLabel: {
+    fontSize: 12,
+    color: "#666680",
+    fontWeight: "600",
   },
 });

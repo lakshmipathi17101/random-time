@@ -2,6 +2,39 @@ import * as SQLite from "expo-sqlite";
 
 export type TaskCategory = "Work" | "Personal" | "Health" | "Other";
 export type TaskPriority = "High" | "Medium" | "Low";
+export type RecurrenceType = "none" | "daily" | "weekly" | "custom";
+
+export interface WeightedRange {
+  id: string;
+  label: string;
+  startSeconds: number;
+  endSeconds: number;
+  weight: number;
+}
+
+export interface ExcludedBlock {
+  id: string;
+  label: string;
+  startSeconds: number;
+  endSeconds: number;
+}
+
+export interface Preset {
+  id: number;
+  name: string;
+  config_json: string; // JSON: { minH, minM, minS, maxH, maxM, maxS, weights, excluded }
+}
+
+export interface PresetConfig {
+  minH: string;
+  minM: string;
+  minS: string;
+  maxH: string;
+  maxM: string;
+  maxS: string;
+  weights: WeightedRange[];
+  excluded: ExcludedBlock[];
+}
 
 export interface Task {
   id: number;
@@ -18,6 +51,8 @@ export interface Task {
   notes: string | null;
   category: TaskCategory | null;
   priority: TaskPriority | null;
+  recurrence_type: RecurrenceType | null;
+  recurrence_interval: number | null;
 }
 
 export type SettingKey =
@@ -28,7 +63,10 @@ export type SettingKey =
   | "max_h"
   | "max_m"
   | "max_s"
-  | "default_reminder";
+  | "default_reminder"
+  | "onboarding_complete"
+  | "weighted_ranges"
+  | "excluded_blocks";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 
@@ -55,6 +93,12 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       key   TEXT PRIMARY KEY NOT NULL,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS presets (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      config_json TEXT NOT NULL
+    );
   `);
 
   // Migrations: add new columns if they don't exist yet
@@ -64,6 +108,8 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
     `ALTER TABLE tasks ADD COLUMN reminder_notification_ids TEXT`,
     `ALTER TABLE tasks ADD COLUMN category TEXT`,
     `ALTER TABLE tasks ADD COLUMN priority TEXT`,
+    `ALTER TABLE tasks ADD COLUMN recurrence_type TEXT`,
+    `ALTER TABLE tasks ADD COLUMN recurrence_interval INTEGER`,
   ];
   for (const sql of migrations) {
     try {
@@ -77,11 +123,13 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
 }
 
 export async function insertTask(
-  task: Omit<Task, "id" | "created_at" | "status" | "notes" | "reminder_notification_ids" | "category" | "priority"> & {
+  task: Omit<Task, "id" | "created_at" | "status" | "notes" | "reminder_notification_ids" | "category" | "priority" | "recurrence_type" | "recurrence_interval"> & {
     notes?: string | null;
     reminder_notification_ids?: string | null;
     category?: TaskCategory | null;
     priority?: TaskPriority | null;
+    recurrence_type?: RecurrenceType | null;
+    recurrence_interval?: number | null;
   }
 ): Promise<number> {
   const db = await getDb();
@@ -89,8 +137,9 @@ export async function insertTask(
     `INSERT INTO tasks
        (title, event_date, reminder_minutes,
         alarm_notification_id, reminder_notification_id,
-        reminder_notification_ids, calendar_event_id, created_at, status, notes, category, priority)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        reminder_notification_ids, calendar_event_id, created_at, status, notes, category, priority,
+        recurrence_type, recurrence_interval)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
     task.title,
     task.event_date,
     task.reminder_minutes,
@@ -101,7 +150,9 @@ export async function insertTask(
     new Date().toISOString(),
     task.notes ?? null,
     task.category ?? null,
-    task.priority ?? null
+    task.priority ?? null,
+    task.recurrence_type ?? null,
+    task.recurrence_interval ?? null
   );
   return result.lastInsertRowId;
 }
@@ -126,6 +177,8 @@ export async function updateTask(
     reminder_notification_ids?: string | null;
     category?: TaskCategory | null;
     priority?: TaskPriority | null;
+    recurrence_type?: RecurrenceType | null;
+    recurrence_interval?: number | null;
   }
 ): Promise<void> {
   const db = await getDb();
@@ -133,7 +186,8 @@ export async function updateTask(
     `UPDATE tasks
      SET title = ?, event_date = ?, reminder_minutes = ?, notes = ?,
          alarm_notification_id = ?, reminder_notification_id = ?,
-         reminder_notification_ids = ?, category = ?, priority = ?
+         reminder_notification_ids = ?, category = ?, priority = ?,
+         recurrence_type = ?, recurrence_interval = ?
      WHERE id = ?`,
     fields.title,
     fields.event_date,
@@ -144,6 +198,8 @@ export async function updateTask(
     fields.reminder_notification_ids ?? null,
     fields.category ?? null,
     fields.priority ?? null,
+    fields.recurrence_type ?? null,
+    fields.recurrence_interval ?? null,
     id
   );
 }
@@ -201,4 +257,26 @@ export async function upsertSetting(
     key,
     value
   );
+}
+
+// Preset CRUD
+
+export async function getPresets(): Promise<Preset[]> {
+  const db = await getDb();
+  return db.getAllAsync<Preset>(`SELECT * FROM presets ORDER BY id ASC`);
+}
+
+export async function insertPreset(name: string, config: PresetConfig): Promise<number> {
+  const db = await getDb();
+  const result = await db.runAsync(
+    `INSERT INTO presets (name, config_json) VALUES (?, ?)`,
+    name,
+    JSON.stringify(config)
+  );
+  return result.lastInsertRowId;
+}
+
+export async function deletePreset(id: number): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM presets WHERE id = ?`, id);
 }
