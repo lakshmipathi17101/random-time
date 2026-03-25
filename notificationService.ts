@@ -33,7 +33,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
     });
   }
 
-  // Register action category for alarm notifications
+  // Register action category: Done / Postpone / Snooze 15 min
   await Notifications.setNotificationCategoryAsync("task_alarm", [
     {
       identifier: "done",
@@ -45,6 +45,11 @@ export async function requestNotificationPermission(): Promise<boolean> {
       buttonTitle: "Postpone",
       options: { isDestructive: false, isAuthenticationRequired: false },
     },
+    {
+      identifier: "snooze",
+      buttonTitle: "Snooze 15 min",
+      options: { isDestructive: false, isAuthenticationRequired: false },
+    },
   ]);
 
   return true;
@@ -52,7 +57,8 @@ export async function requestNotificationPermission(): Promise<boolean> {
 
 export function setupNotificationResponseHandler(
   onDone: (taskId: number) => void,
-  onPostpone: (taskId: number) => void
+  onPostpone: (taskId: number) => void,
+  onSnooze: (taskId: number) => void
 ): () => void {
   const subscription = Notifications.addNotificationResponseReceivedListener(
     (response) => {
@@ -61,6 +67,7 @@ export function setupNotificationResponseHandler(
       if (taskId == null) return;
       if (actionId === "done") onDone(taskId);
       else if (actionId === "postpone") onPostpone(taskId);
+      else if (actionId === "snooze") onSnooze(taskId);
     }
   );
   return () => subscription.remove();
@@ -120,6 +127,15 @@ export async function scheduleAlarm(
   });
 
   return id;
+}
+
+/** Reschedule a snooze alarm 15 minutes from now */
+export async function scheduleSnoozeAlarm(
+  title: string,
+  taskId: number
+): Promise<string | null> {
+  const snoozeDate = new Date(Date.now() + 15 * 60 * 1000);
+  return scheduleAlarm(title, snoozeDate, taskId);
 }
 
 export async function cancelNotification(id: string): Promise<void> {

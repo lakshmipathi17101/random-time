@@ -2,31 +2,71 @@
   "expo": {
     "name": "RandomTime",
     "slug": "random-time",
-    "version": "1.0.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "description": "Generate random times for your day. Schedule tasks, set reminders, and stop overthinking when to do things.",
+    "primaryColor": "#6c63ff",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0f0f1a"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.randomtime.app",
+      "buildNumber": "13",
+      "infoPlist": {
+        "NSCalendarsUsageDescription": "RandomTime creates calendar events for your scheduled tasks.",
+        "NSCalendarsFullAccessUsageDescription": "RandomTime creates calendar events for your scheduled tasks.",
+        "NSRemindersUsageDescription": "RandomTime schedules reminders before your tasks.",
+        "UIBackgroundModes": ["fetch", "remote-notification"]
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      }
+        "backgroundColor": "#0f0f1a"
+      },
+      "package": "com.randomtime.app",
+      "versionCode": 13,
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR",
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-sqlite",
-      "@react-native-community/datetimepicker"
-    ]
+      "@react-native-community/datetimepicker",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "RandomTime creates calendar events for your tasks."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#6c63ff",
+          "defaultChannel": "default",
+          "sounds": []
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "random-time"
+      }
+    }
   }
 }

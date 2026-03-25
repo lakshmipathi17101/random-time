@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from "react-native";
 import DateTimePicker, {
   DateTimePickerEvent,
@@ -24,12 +25,30 @@ import {
   scheduleAlarm,
   cancelNotification,
 } from "./notificationService";
-import { insertTask, updateTask, Task, TaskCategory, TaskPriority } from "./db";
+import {
+  insertTask,
+  updateTask,
+  Task,
+  TaskCategory,
+  TaskPriority,
+  RecurrenceType,
+} from "./db";
 import * as Haptics from "expo-haptics";
 
 const REMINDER_OPTIONS = [5, 10, 15, 30] as const;
 const CATEGORY_OPTIONS: TaskCategory[] = ["Work", "Personal", "Health", "Other"];
 const PRIORITY_OPTIONS: TaskPriority[] = ["High", "Medium", "Low"];
+const RECURRENCE_OPTIONS: { key: RecurrenceType; label: string }[] = [
+  { key: "none", label: "None" },
+  { key: "daily", label: "Daily" },
+  { key: "weekly", label: "Weekly" },
+  { key: "custom", label: "Custom" },
+];
+
+/** Minutes between two dates — used for conflict check */
+function minutesBetween(a: Date, b: Date): number {
+  return Math.abs(a.getTime() - b.getTime()) / (1000 * 60);
+}
 
 interface AddEventModalProps {
   visible: boolean;
@@ -40,6 +59,8 @@ interface AddEventModalProps {
   onTaskSaved: () => void;
   editTask?: Task;
   defaultReminderMin?: number;
+  /** Existing tasks for conflict detection */
+  existingTasks?: Task[];
 }
 
 export default function AddEventModal({
@@ -51,6 +72,7 @@ export default function AddEventModal({
   onTaskSaved,
   editTask,
   defaultReminderMin = 10,
+  existingTasks = [],
 }: AddEventModalProps) {
   const [taskName, setTaskName] = useState("");
   const [notes, setNotes] = useState("");
@@ -65,6 +87,8 @@ export default function AddEventModal({
   const [selectedReminders, setSelectedReminders] = useState<number[]>([defaultReminderMin]);
   const [customMinutes, setCustomMinutes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>("none");
+  const [recurrenceInterval, setRecurrenceInterval] = useState("2");
 
   // Pre-fill fields when editing an existing task
   useEffect(() => {
@@ -78,6 +102,17 @@ export default function AddEventModal({
       setCustomMinutes("");
       setCategory(editTask.category ?? null);
       setPriority(editTask.priority ?? null);
+      setRecurrenceType(editTask.recurrence_type ?? "none");
+      setRecurrenceInterval(
+        editTask.recurrence_interval != null
+          ? String(editTask.recurrence_interval)
+          : "2"
+      );
+    }
+    if (visible && !editTask) {
+      // Reset for new task
+      setRecurrenceType("none");
+      setRecurrenceInterval("2");
     }
   }, [visible, editTask]);
 
@@ -87,6 +122,23 @@ export default function AddEventModal({
     if (!isNaN(parsed) && parsed > 0 && !all.includes(parsed)) all.push(parsed);
     return all.sort((a, b) => b - a); // descending: 30, 10, 5
   })();
+
+  /** Check if the proposed event time conflicts with an existing task (within 30 min) */
+  const findConflict = (eventDate: Date): Task | undefined => {
+    return existingTasks.find((t) => {
+      if (editTask && t.id === editTask.id) return false; // skip self
+      if (t.status === "done") return false;
+      const tDate = new Date(t.event_date);
+      // Same calendar day only
+      if (
+        tDate.getFullYear() !== eventDate.getFullYear() ||
+        tDate.getMonth() !== eventDate.getMonth() ||
+        tDate.getDate() !== eventDate.getDate()
+      )
+        return false;
+      return minutesBetween(tDate, eventDate) < 30;
+    });
+  };
 
   const handleSave = async () => {
     const name = taskName.trim();
@@ -99,25 +151,48 @@ export default function AddEventModal({
       return;
     }
 
+    const srcH = editTask ? new Date(editTask.event_date).getHours() : eventHour;
+    const srcM = editTask ? new Date(editTask.event_date).getMinutes() : eventMinute;
+    const srcS = editTask ? new Date(editTask.event_date).getSeconds() : eventSecond;
+
+    const eventDate = new Date(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      selectedDate.getDate(),
+      srcH,
+      srcM,
+      srcS
+    );
+
+    // Conflict detection
+    const conflict = findConflict(eventDate);
+    if (conflict) {
+      const conflictTime = new Date(conflict.event_date);
+      const hh = String(conflictTime.getHours()).padStart(2, "0");
+      const mm = String(conflictTime.getMinutes()).padStart(2, "0");
+      const proceed = await new Promise<boolean>((resolve) => {
+        Alert.alert(
+          "Schedule Conflict",
+          `"${conflict.title}" is already scheduled at ${hh}:${mm} on this day (within 30 min). Save anyway?`,
+          [
+            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+            { text: "Save Anyway", onPress: () => resolve(true) },
+          ]
+        );
+      });
+      if (!proceed) return;
+    }
+
     setSaving(true);
 
     try {
-      const srcH = editTask ? new Date(editTask.event_date).getHours() : eventHour;
-      const srcM = editTask ? new Date(editTask.event_date).getMinutes() : eventMinute;
-      const srcS = editTask ? new Date(editTask.event_date).getSeconds() : eventSecond;
-
-      const eventDate = new Date(
-        selectedDate.getFullYear(),
-        selectedDate.getMonth(),
-        selectedDate.getDate(),
-        srcH,
-        srcM,
-        srcS
-      );
-
       const notifGranted = await requestNotificationPermission();
       let alarmId: string | null = null;
       const reminderIds: string[] = [];
+
+      const recurrInterval =
+        recurrenceType === "custom" ? parseInt(recurrenceInterval, 10) || 2 : null;
+      const recurrType = recurrenceType === "none" ? null : recurrenceType;
 
       if (editTask) {
         // Edit mode: cancel all old notifications
@@ -133,7 +208,7 @@ export default function AddEventModal({
             const id = await scheduleReminder(name, eventDate, mins);
             if (id) reminderIds.push(id);
           }
-          alarmId = await scheduleAlarm(name, eventDate);
+          alarmId = await scheduleAlarm(name, eventDate, editTask.id);
         }
 
         await updateTask(editTask.id, {
@@ -146,6 +221,8 @@ export default function AddEventModal({
           reminder_notification_ids: JSON.stringify(reminderIds),
           category,
           priority,
+          recurrence_type: recurrType,
+          recurrence_interval: recurrInterval,
         });
       } else {
         // Create mode
@@ -166,7 +243,7 @@ export default function AddEventModal({
           alarmId = await scheduleAlarm(name, eventDate);
         }
 
-        await insertTask({
+        const newId = await insertTask({
           title: name,
           event_date: eventDate.toISOString(),
           reminder_minutes: effectiveReminderMins[0] ?? 10,
@@ -177,7 +254,19 @@ export default function AddEventModal({
           notes: notes.trim() || null,
           category,
           priority,
+          recurrence_type: recurrType,
+          recurrence_interval: recurrInterval,
         });
+
+        // Update alarm with proper taskId now that we have it
+        if (alarmId) {
+          await cancelNotification(alarmId);
+          const newAlarmId = await scheduleAlarm(name, eventDate, newId);
+          if (newAlarmId && newAlarmId !== alarmId) {
+            const { updateTaskTime } = await import("./db");
+            await updateTaskTime(newId, eventDate.toISOString(), newAlarmId, reminderIds[0] ?? null);
+          }
+        }
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -195,9 +284,17 @@ export default function AddEventModal({
         );
       } else {
         const label = effectiveReminderMins.map((m) => `${m} min`).join(", ");
+        const recurLabel =
+          recurrType === "daily"
+            ? " · repeats daily"
+            : recurrType === "weekly"
+            ? " · repeats weekly"
+            : recurrType === "custom"
+            ? ` · repeats every ${recurrInterval} day(s)`
+            : "";
         Alert.alert(
           "Saved",
-          `${editTask ? "Task updated" : "Event created"} with reminders at ${label} before and an alarm at event time.`
+          `${editTask ? "Task updated" : "Event created"} with reminders at ${label} before and an alarm at event time${recurLabel}.`
         );
       }
 
@@ -221,6 +318,8 @@ export default function AddEventModal({
     setCustomMinutes("");
     setCategory(null);
     setPriority(null);
+    setRecurrenceType("none");
+    setRecurrenceInterval("2");
     onClose();
   };
 
@@ -235,7 +334,11 @@ export default function AddEventModal({
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.overlay}
       >
-        <View style={styles.sheet}>
+        <ScrollView
+          style={styles.sheet}
+          contentContainerStyle={styles.sheetContent}
+          keyboardShouldPersistTaps="handled"
+        >
           <Text style={styles.title}>{editTask ? "Edit Task" : "Add to Calendar"}</Text>
 
           {/* Task Name */}
@@ -325,6 +428,35 @@ export default function AddEventModal({
             })}
           </View>
 
+          {/* Recurrence */}
+          <Text style={styles.label}>Repeat</Text>
+          <View style={styles.chipRow}>
+            {RECURRENCE_OPTIONS.map((opt) => (
+              <TouchableOpacity
+                key={opt.key}
+                style={[styles.chip, recurrenceType === opt.key && styles.chipActive]}
+                onPress={() => setRecurrenceType(opt.key)}
+              >
+                <Text style={[styles.chipText, recurrenceType === opt.key && styles.chipTextActive]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {recurrenceType === "custom" && (
+            <View style={styles.customIntervalRow}>
+              <Text style={styles.labelSmall}>Every</Text>
+              <TextInput
+                style={styles.textInputSmall}
+                keyboardType="number-pad"
+                value={recurrenceInterval}
+                onChangeText={setRecurrenceInterval}
+                maxLength={3}
+              />
+              <Text style={styles.labelSmall}>day(s)</Text>
+            </View>
+          )}
+
           {/* Reminder Chips (multi-select) */}
           <Text style={styles.label}>Remind me before</Text>
           <View style={styles.chipRow}>
@@ -386,7 +518,7 @@ export default function AddEventModal({
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -402,6 +534,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#1a1a2e",
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    maxHeight: "92%",
+  },
+  sheetContent: {
     padding: 24,
     paddingBottom: 40,
   },
@@ -461,10 +596,18 @@ const styles = StyleSheet.create({
     padding: 10,
     borderWidth: 1,
     borderColor: "#3a3a55",
-    width: 100,
+    width: 80,
+    textAlign: "center",
+  },
+  customIntervalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
   },
   chipRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
     marginTop: 4,
   },
@@ -507,12 +650,11 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   saveButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
+    flex: 2,
     backgroundColor: "#6c63ff",
+    borderRadius: 14,
+    paddingVertical: 14,
     alignItems: "center",
-    justifyContent: "center",
   },
   saveText: {
     color: "#ffffff",
