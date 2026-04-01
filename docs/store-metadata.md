@@ -176,3 +176,19 @@ eas submit --platform ios
 # Submit to Play Store
 eas submit --platform android
 ```
+
+---
+
+## Submission Checklist
+
+- [ ] EAS project ID confirmed in `app.json` (`extra.eas.projectId`)
+- [ ] Apple Developer account enrolled + `appleTeamId` set in `eas.json`
+- [ ] App Store Connect app record created with bundle ID `com.randomtime.app`
+- [ ] `ascAppId` set in `eas.json` submit config
+- [ ] Google Play Console app created with package `com.randomtime.app`
+- [ ] Google service account JSON downloaded → `google-service-account.json` (git-ignored)
+- [ ] Privacy policy page published at https://randomtime.app/privacy
+- [ ] Screenshots captured (5 required per device class)
+- [ ] Feature graphic created (Android — 1024×500px)
+- [ ] Run `eas build --platform all --profile production`
+- [ ] Run `eas submit --platform all --profile production`

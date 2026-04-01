@@ -9,6 +9,7 @@
     "newArchEnabled": true,
     "description": "Generate random times for your day. Schedule tasks, set reminders, and stop overthinking when to do things.",
     "primaryColor": "#6c63ff",
+    "scheme": "randomtime",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -37,12 +38,14 @@
         "android.permission.READ_CALENDAR",
         "android.permission.WRITE_CALENDAR",
         "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.USE_EXACT_ALARM",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.VIBRATE"
       ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
     },
     "plugins": [
       "expo-sqlite",
@@ -59,7 +62,8 @@
           "icon": "./assets/icon.png",
           "color": "#6c63ff",
           "defaultChannel": "default",
-          "sounds": []
+          "sounds": [],
+          "mode": "production"
         }
       ]
     ],
@@ -67,6 +71,7 @@
       "eas": {
         "projectId": "random-time"
       }
-    }
+    },
+    "owner": "lakshmipathi17101"
   }
 }
