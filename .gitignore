@@ -10,3 +10,8 @@ npm-debug.*
 *.orig.*
 web-build/
 nul
+
+# EAS / store credentials
+google-service-account.json
+*.credentials.json
+credentials/
