@@ -11,13 +11,9 @@ Notifications.setNotificationHandler({
   }),
 });
 
-export async function requestNotificationPermission(): Promise<boolean> {
-  const { status: existing } = await Notifications.getPermissionsAsync();
-  if (existing === "granted") return true;
-
-  const { status } = await Notifications.requestPermissionsAsync();
-  if (status !== "granted") return false;
-
+/** Ensures Android notification channels and action categories exist.
+ *  Safe to call multiple times — setNotificationChannelAsync is idempotent. */
+async function ensureNotificationSetup(): Promise<void> {
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("reminders", {
       name: "Task Reminders",
@@ -33,7 +29,6 @@ export async function requestNotificationPermission(): Promise<boolean> {
     });
   }
 
-  // Register action category for alarm notifications
   await Notifications.setNotificationCategoryAsync("task_alarm", [
     {
       identifier: "done",
@@ -46,7 +41,21 @@ export async function requestNotificationPermission(): Promise<boolean> {
       options: { isDestructive: false, isAuthenticationRequired: false },
     },
   ]);
+}
 
+export async function requestNotificationPermission(): Promise<boolean> {
+  const { status: existing } = await Notifications.getPermissionsAsync();
+
+  if (existing === "granted") {
+    // Channels may not have been set up on a previous install — ensure they exist
+    await ensureNotificationSetup();
+    return true;
+  }
+
+  const { status } = await Notifications.requestPermissionsAsync();
+  if (status !== "granted") return false;
+
+  await ensureNotificationSetup();
   return true;
 }
 
@@ -57,7 +66,9 @@ export function setupNotificationResponseHandler(
   const subscription = Notifications.addNotificationResponseReceivedListener(
     (response) => {
       const actionId = response.actionIdentifier;
-      const taskId = response.notification.request.content.data?.taskId as number | undefined;
+      const taskId = response.notification.request.content.data?.taskId as
+        | number
+        | undefined;
       if (taskId == null) return;
       if (actionId === "done") onDone(taskId);
       else if (actionId === "postpone") onPostpone(taskId);
@@ -124,4 +135,26 @@ export async function scheduleAlarm(
 
 export async function cancelNotification(id: string): Promise<void> {
   await Notifications.cancelScheduledNotificationAsync(id);
+}
+
+/** Cancels all scheduled notifications for a task in one call. */
+export async function cancelTaskNotifications(task: {
+  alarm_notification_id: string | null;
+  reminder_notification_id: string | null;
+  reminder_notification_ids: string | null;
+}): Promise<void> {
+  const promises: Promise<void>[] = [];
+
+  if (task.alarm_notification_id)
+    promises.push(cancelNotification(task.alarm_notification_id));
+
+  if (task.reminder_notification_id)
+    promises.push(cancelNotification(task.reminder_notification_id));
+
+  if (task.reminder_notification_ids) {
+    const ids: string[] = JSON.parse(task.reminder_notification_ids);
+    ids.forEach((id) => promises.push(cancelNotification(id)));
+  }
+
+  await Promise.all(promises);
 }

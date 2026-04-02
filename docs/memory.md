@@ -1,6 +1,6 @@
 # Memory — Project Status Tracker
 
-## Current Status: Phase 4 — Task Enhancements (In Progress)
+## Current Status: Phase 5 complete — Phases 6-9 pending
 
 ## Completed
 - [x] Project initialized with Expo + TypeScript
@@ -19,8 +19,28 @@
 - [x] docs/test-plan.md created
 - [x] docs/plan.md updated with all 9 phases
 
+## Phase 4 Completed Features
+- [x] Mark task done (checkbox, strike-through, persisted)
+- [x] Task notes/description
+- [x] Date picker (future dates)
+- [x] Postpone task (new random time)
+- [x] Edit task (pre-filled modal)
+- [x] Haptic feedback throughout
+- [x] Multiple reminders per task (multi-select chips)
+- [x] Task categories + priority (Work/Personal/Health/Other, High/Medium/Low)
+- [x] Search, filter (All/Pending/Done), sort (Time/Priority/Created)
+- [x] Bulk delete (long-press selection)
+- [x] Multiple times at once (×1/×3/×5)
+- [x] Share task (native Share sheet)
+- [x] Statistics section (total, done, completion %)
+
+## Phase 5 Completed Features
+- [x] Settings panel (default reminder, delete all done)
+- [x] Notification action buttons: Done + Postpone from tray
+- [x] scheduleAlarm embeds taskId for action routing
+
 ## In Progress
-- [ ] Phase 4 — Task Enhancements (implementing one by one)
+- [ ] Phases 6-9 — remaining roadmap items
 
 ## Decisions Made
 - Expo managed workflow (not bare)

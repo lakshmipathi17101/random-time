@@ -1,0 +1,309 @@
+/**
+ * Unit tests for notificationService.ts
+ * Mocks expo-notifications with self-contained jest.fn() factories.
+ */
+
+// Self-contained factory — all jest.fn() created inside to avoid hoisting issues
+jest.mock("expo-notifications", () => ({
+  setNotificationHandler: jest.fn(),
+  getPermissionsAsync: jest.fn(),
+  requestPermissionsAsync: jest.fn(),
+  setNotificationChannelAsync: jest.fn(),
+  setNotificationCategoryAsync: jest.fn(),
+  scheduleNotificationAsync: jest.fn(),
+  cancelScheduledNotificationAsync: jest.fn(),
+  addNotificationResponseReceivedListener: jest.fn(),
+  AndroidImportance: { HIGH: 4, MAX: 5 },
+  SchedulableTriggerInputTypes: { DATE: "date" },
+}));
+
+// jest-expo already mocks react-native — rely on its Platform.OS default (ios)
+
+import * as Notifications from "expo-notifications";
+import {
+  requestNotificationPermission,
+  setupNotificationResponseHandler,
+  scheduleReminder,
+  scheduleAlarm,
+  cancelNotification,
+} from "../notificationService";
+
+// Typed references to the mock functions
+const mockGetPermissions = jest.mocked(Notifications.getPermissionsAsync);
+const mockRequestPermissions = jest.mocked(Notifications.requestPermissionsAsync);
+const mockSetChannel = jest.mocked(Notifications.setNotificationChannelAsync);
+const mockSetCategory = jest.mocked(Notifications.setNotificationCategoryAsync);
+const mockSchedule = jest.mocked(Notifications.scheduleNotificationAsync);
+const mockCancel = jest.mocked(Notifications.cancelScheduledNotificationAsync);
+const mockAddListener = jest.mocked(
+  Notifications.addNotificationResponseReceivedListener
+);
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockGetPermissions.mockResolvedValue({ status: "granted" } as Awaited<
+    ReturnType<typeof Notifications.getPermissionsAsync>
+  >);
+  mockRequestPermissions.mockResolvedValue({ status: "granted" } as Awaited<
+    ReturnType<typeof Notifications.requestPermissionsAsync>
+  >);
+  mockSetChannel.mockResolvedValue(null as never);
+  mockSetCategory.mockResolvedValue(null as never);
+  mockSchedule.mockResolvedValue("notif-id-123");
+  mockCancel.mockResolvedValue(undefined);
+  mockAddListener.mockReturnValue({
+    remove: jest.fn(),
+  } as unknown as ReturnType<typeof Notifications.addNotificationResponseReceivedListener>);
+});
+
+// ---------------------------------------------------------------------------
+// requestNotificationPermission
+// ---------------------------------------------------------------------------
+describe("requestNotificationPermission", () => {
+  it("returns true when permission is already granted", async () => {
+    const result = await requestNotificationPermission();
+    expect(result).toBe(true);
+    expect(mockRequestPermissions).not.toHaveBeenCalled();
+  });
+
+  it("requests permission when not yet granted and returns true on grant", async () => {
+    mockGetPermissions.mockResolvedValueOnce({ status: "undetermined" } as never);
+    mockRequestPermissions.mockResolvedValueOnce({ status: "granted" } as never);
+    const result = await requestNotificationPermission();
+    expect(result).toBe(true);
+    expect(mockRequestPermissions).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns false when user denies permission", async () => {
+    mockGetPermissions.mockResolvedValueOnce({ status: "undetermined" } as never);
+    mockRequestPermissions.mockResolvedValueOnce({ status: "denied" } as never);
+    const result = await requestNotificationPermission();
+    expect(result).toBe(false);
+  });
+
+  it("registers task_alarm notification category with Done and Postpone actions", async () => {
+    mockGetPermissions.mockResolvedValueOnce({ status: "undetermined" } as never);
+    await requestNotificationPermission();
+    expect(mockSetCategory).toHaveBeenCalledWith(
+      "task_alarm",
+      expect.arrayContaining([
+        expect.objectContaining({ identifier: "done" }),
+        expect.objectContaining({ identifier: "postpone" }),
+      ])
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scheduleReminder
+// ---------------------------------------------------------------------------
+describe("scheduleReminder", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-03-01T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("returns null when trigger time is in the past", async () => {
+    // Event in 1h, reminder 90 min before → trigger 30 min ago
+    const eventDate = new Date("2026-03-01T13:00:00.000Z");
+    const id = await scheduleReminder("Test", eventDate, 90);
+    expect(id).toBeNull();
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it("returns null when trigger equals current time", async () => {
+    // Event in 15 min, reminder 15 min before → trigger = now
+    const eventDate = new Date("2026-03-01T12:15:00.000Z");
+    const id = await scheduleReminder("Test", eventDate, 15);
+    expect(id).toBeNull();
+  });
+
+  it("returns notification ID when trigger is in the future", async () => {
+    // Event in 2h, reminder 30 min before → trigger 90 min from now
+    const eventDate = new Date("2026-03-01T14:00:00.000Z");
+    const id = await scheduleReminder("My Event", eventDate, 30);
+    expect(id).toBe("notif-id-123");
+    expect(mockSchedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes task title and minutesBefore in the notification body", async () => {
+    const eventDate = new Date("2026-03-01T14:00:00.000Z");
+    await scheduleReminder("Sprint Review", eventDate, 10);
+    const [payload] = mockSchedule.mock.calls[0] as [{ content: { body: string } }];
+    expect(payload.content.body).toContain("Sprint Review");
+    expect(payload.content.body).toContain("10");
+  });
+
+  it("uses DATE trigger type", async () => {
+    const eventDate = new Date("2026-03-01T14:00:00.000Z");
+    await scheduleReminder("Test", eventDate, 5);
+    const [payload] = mockSchedule.mock.calls[0] as [
+      { trigger: { type: string } }
+    ];
+    expect(payload.trigger.type).toBe("date");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scheduleAlarm
+// ---------------------------------------------------------------------------
+describe("scheduleAlarm", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-03-01T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("returns null when eventDate is in the past", async () => {
+    const pastDate = new Date("2026-03-01T11:59:00.000Z");
+    const id = await scheduleAlarm("Test", pastDate);
+    expect(id).toBeNull();
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it("returns notification ID for a future event", async () => {
+    const futureDate = new Date("2026-03-01T13:00:00.000Z");
+    const id = await scheduleAlarm("Meeting", futureDate);
+    expect(id).toBe("notif-id-123");
+    expect(mockSchedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("sets categoryIdentifier to 'task_alarm'", async () => {
+    const futureDate = new Date("2026-03-01T13:00:00.000Z");
+    await scheduleAlarm("Meeting", futureDate);
+    const [payload] = mockSchedule.mock.calls[0] as [
+      { content: { categoryIdentifier: string } }
+    ];
+    expect(payload.content.categoryIdentifier).toBe("task_alarm");
+  });
+
+  it("embeds taskId in notification data when provided", async () => {
+    const futureDate = new Date("2026-03-01T13:00:00.000Z");
+    await scheduleAlarm("Meeting", futureDate, 42);
+    const [payload] = mockSchedule.mock.calls[0] as unknown as [
+      { content: { data: { taskId: number } } }
+    ];
+    expect(payload.content.data.taskId).toBe(42);
+  });
+
+  it("uses empty data object when taskId is omitted", async () => {
+    const futureDate = new Date("2026-03-01T13:00:00.000Z");
+    await scheduleAlarm("Meeting", futureDate);
+    const [payload] = mockSchedule.mock.calls[0] as unknown as [
+      { content: { data: Record<string, unknown> } }
+    ];
+    expect(payload.content.data).toEqual({});
+  });
+
+  it("includes task title in the notification body", async () => {
+    const futureDate = new Date("2026-03-01T13:00:00.000Z");
+    await scheduleAlarm("Doctor Appointment", futureDate);
+    const [payload] = mockSchedule.mock.calls[0] as [{ content: { body: string } }];
+    expect(payload.content.body).toContain("Doctor Appointment");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cancelNotification
+// ---------------------------------------------------------------------------
+describe("cancelNotification", () => {
+  it("calls cancelScheduledNotificationAsync with the given ID", async () => {
+    await cancelNotification("abc-123");
+    expect(mockCancel).toHaveBeenCalledWith("abc-123");
+  });
+
+  it("passes the ID through unchanged", async () => {
+    await cancelNotification("some-uuid-value");
+    expect(mockCancel).toHaveBeenCalledWith("some-uuid-value");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setupNotificationResponseHandler
+// ---------------------------------------------------------------------------
+describe("setupNotificationResponseHandler", () => {
+  // Build a synthetic notification response object
+  const makeResponse = (actionId: string, taskId: number | undefined) => ({
+    actionIdentifier: actionId,
+    notification: {
+      request: {
+        content: {
+          data: taskId != null ? { taskId } : {},
+        },
+      },
+    },
+  });
+
+  // Extract the listener callback registered by setupNotificationResponseHandler
+  function getRegisteredListener() {
+    return mockAddListener.mock.calls[0][0] as (r: unknown) => void;
+  }
+
+  it("returns a cleanup function", () => {
+    const cleanup = setupNotificationResponseHandler(jest.fn(), jest.fn());
+    expect(typeof cleanup).toBe("function");
+  });
+
+  it("routes 'done' action to onDone with the taskId", () => {
+    const onDone = jest.fn();
+    const onPostpone = jest.fn();
+    setupNotificationResponseHandler(onDone, onPostpone);
+
+    getRegisteredListener()(makeResponse("done", 7));
+
+    expect(onDone).toHaveBeenCalledWith(7);
+    expect(onPostpone).not.toHaveBeenCalled();
+  });
+
+  it("routes 'postpone' action to onPostpone with the taskId", () => {
+    const onDone = jest.fn();
+    const onPostpone = jest.fn();
+    setupNotificationResponseHandler(onDone, onPostpone);
+
+    getRegisteredListener()(makeResponse("postpone", 15));
+
+    expect(onPostpone).toHaveBeenCalledWith(15);
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("ignores responses without a taskId", () => {
+    const onDone = jest.fn();
+    const onPostpone = jest.fn();
+    setupNotificationResponseHandler(onDone, onPostpone);
+
+    getRegisteredListener()(makeResponse("done", undefined));
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onPostpone).not.toHaveBeenCalled();
+  });
+
+  it("ignores unknown action identifiers", () => {
+    const onDone = jest.fn();
+    const onPostpone = jest.fn();
+    setupNotificationResponseHandler(onDone, onPostpone);
+
+    getRegisteredListener()(makeResponse("some_other_action", 5));
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onPostpone).not.toHaveBeenCalled();
+  });
+
+  it("cleanup function calls subscription.remove()", () => {
+    const removeMock = jest.fn();
+    mockAddListener.mockReturnValueOnce({
+      remove: removeMock,
+    } as unknown as ReturnType<typeof Notifications.addNotificationResponseReceivedListener>);
+
+    const cleanup = setupNotificationResponseHandler(jest.fn(), jest.fn());
+    cleanup();
+
+    expect(removeMock).toHaveBeenCalledTimes(1);
+  });
+});
