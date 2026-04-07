@@ -15,9 +15,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.lakshmipathi.randomtime",
+      "buildNumber": "1",
       "infoPlist": {
-        "NSCalendarsUsageDescription": "RandomTime needs calendar access to schedule your tasks.",
-        "NSRemindersUsageDescription": "RandomTime needs reminders access to schedule your tasks."
+        "NSCalendarsUsageDescription": "RandomTime needs calendar access to schedule your tasks at your chosen time.",
+        "NSRemindersUsageDescription": "RandomTime needs reminders access to create task reminders.",
+        "NSUserNotificationsUsageDescription": "RandomTime uses notifications to remind you of upcoming tasks."
       }
     },
     "android": {
@@ -33,7 +35,8 @@
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.VIBRATE",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.SCHEDULE_EXACT_ALARM"
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.USE_EXACT_ALARM"
       ]
     },
     "web": {
@@ -54,9 +57,14 @@
       [
         "expo-calendar",
         {
-          "calendarPermission": "RandomTime needs calendar access to schedule your tasks."
+          "calendarPermission": "RandomTime needs calendar access to schedule your tasks at your chosen time."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    }
   }
 }

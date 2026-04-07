@@ -1,5 +1,8 @@
-import { StyleSheet, Text, View, TextInput, TouchableOpacity } from "react-native";
+import { Linking, StyleSheet, Text, View, TextInput, TouchableOpacity } from "react-native";
 import { darkColors } from "../theme";
+
+const APP_VERSION = "1.0.0";
+const PRIVACY_POLICY_URL = "https://lakshmipathi17101.github.io/random-time/privacy";
 
 interface SettingsPanelProps {
   defaultReminder: string;
@@ -23,9 +26,31 @@ export default function SettingsPanel({
         onChangeText={onChangeDefaultReminder}
         placeholderTextColor={darkColors.textDim}
         placeholder="10"
+        accessibilityLabel="Default reminder time in minutes"
       />
-      <TouchableOpacity style={styles.settingsDangerButton} onPress={onDeleteAllDone}>
+
+      <TouchableOpacity
+        style={styles.settingsDangerButton}
+        onPress={onDeleteAllDone}
+        accessibilityRole="button"
+        accessibilityLabel="Delete all done tasks"
+      >
         <Text style={styles.settingsDangerText}>Delete all done tasks</Text>
+      </TouchableOpacity>
+
+      <View style={styles.divider} />
+
+      <Text style={styles.settingsSectionLabel}>About</Text>
+      <View style={styles.aboutRow}>
+        <Text style={styles.aboutLabel}>Version</Text>
+        <Text style={styles.aboutValue}>{APP_VERSION}</Text>
+      </View>
+      <TouchableOpacity
+        onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+        accessibilityRole="link"
+        accessibilityLabel="Open Privacy Policy"
+      >
+        <Text style={styles.aboutLink}>Privacy Policy</Text>
       </TouchableOpacity>
     </View>
   );
@@ -69,6 +94,30 @@ const styles = StyleSheet.create({
   settingsDangerText: {
     color: darkColors.danger,
     fontSize: 13,
+    fontWeight: "600",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: darkColors.bgBorder,
+    marginVertical: 4,
+  },
+  aboutRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  aboutLabel: {
+    fontSize: 13,
+    color: darkColors.textMuted,
+  },
+  aboutValue: {
+    fontSize: 13,
+    color: darkColors.text,
+    fontWeight: "600",
+  },
+  aboutLink: {
+    fontSize: 13,
+    color: darkColors.accent,
     fontWeight: "600",
   },
 });

@@ -45,7 +45,12 @@ export default function TaskList({
       <View style={styles.taskListHeader}>
         <Text style={styles.taskListTitle}>Saved Tasks</Text>
         {selectedIds.size > 0 && (
-          <TouchableOpacity style={styles.bulkDeleteButton} onPress={onBulkDelete}>
+          <TouchableOpacity
+            style={styles.bulkDeleteButton}
+            onPress={onBulkDelete}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${selectedIds.size} selected task${selectedIds.size === 1 ? "" : "s"}`}
+          >
             <Text style={styles.bulkDeleteText}>Delete {selectedIds.size}</Text>
           </TouchableOpacity>
         )}
@@ -57,6 +62,8 @@ export default function TaskList({
         placeholderTextColor={darkColors.textDim}
         value={searchQuery}
         onChangeText={onSearchChange}
+        accessibilityLabel="Search tasks"
+        returnKeyType="search"
       />
 
       <View style={styles.filterRow}>
@@ -65,6 +72,9 @@ export default function TaskList({
             key={f}
             style={[styles.filterChip, filterStatus === f && styles.filterChipActive]}
             onPress={() => onFilterChange(f)}
+            accessibilityRole="button"
+            accessibilityLabel={`Filter: ${f === "all" ? "All tasks" : f === "pending" ? "Pending tasks" : "Done tasks"}`}
+            accessibilityState={{ selected: filterStatus === f }}
           >
             <Text
               style={[
@@ -82,6 +92,9 @@ export default function TaskList({
             key={s}
             style={[styles.sortChip, sortBy === s && styles.sortChipActive]}
             onPress={() => onSortChange(s)}
+            accessibilityRole="button"
+            accessibilityLabel={`Sort by ${s === "time" ? "time" : s === "priority" ? "priority" : "creation date"}`}
+            accessibilityState={{ selected: sortBy === s }}
           >
             <Text
               style={[

@@ -8,6 +8,7 @@ import {
   Platform,
   ScrollView,
   FlatList,
+  Share,
 } from "react-native";
 import { SafeAreaView, SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -235,6 +236,13 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const shareResult = async (idx: number) => {
+    const r = results[idx];
+    if (!r) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await Share.share({ message: `My random time: ${formatResult(r.h, r.m, r.s)}` });
+  };
+
   // ── render ────────────────────────────────────────────────────────────────
 
   return (
@@ -256,6 +264,9 @@ export default function App() {
             <TouchableOpacity
               style={styles.settingsToggle}
               onPress={() => setSettingsVisible((v) => !v)}
+              accessibilityRole="button"
+              accessibilityLabel={settingsVisible ? "Hide settings" : "Show settings"}
+              accessibilityState={{ expanded: settingsVisible }}
             >
               <Text style={styles.settingsToggleText}>
                 {settingsVisible ? "▲ Settings" : "▼ Settings"}
@@ -277,6 +288,9 @@ export default function App() {
                 settings.setIs24h(!settings.is24h);
                 setCopied(false);
               }}
+              accessibilityRole="switch"
+              accessibilityLabel={settings.is24h ? "Switch to 12-hour format" : "Switch to 24-hour format"}
+              accessibilityState={{ checked: settings.is24h }}
             >
               <Text style={[styles.toggleOption, settings.is24h && styles.toggleActive]}>
                 24H
@@ -323,6 +337,9 @@ export default function App() {
                   key={n}
                   style={[styles.countChip, generateCount === n && styles.countChipActive]}
                   onPress={() => setGenerateCount(n)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Generate ${n} time${n > 1 ? "s" : ""}`}
+                  accessibilityState={{ selected: generateCount === n }}
                 >
                   <Text
                     style={[
@@ -334,7 +351,12 @@ export default function App() {
                   </Text>
                 </TouchableOpacity>
               ))}
-              <TouchableOpacity style={[styles.button, styles.buttonFlex]} onPress={generate}>
+              <TouchableOpacity
+                style={[styles.button, styles.buttonFlex]}
+                onPress={generate}
+                accessibilityRole="button"
+                accessibilityLabel="Generate random time"
+              >
                 <Text style={styles.buttonText}>Generate</Text>
               </TouchableOpacity>
             </View>
@@ -350,10 +372,20 @@ export default function App() {
                   <TouchableOpacity
                     style={styles.copyButton}
                     onPress={() => copyToClipboard(idx)}
+                    accessibilityRole="button"
+                    accessibilityLabel={copied && activeResultIdx === idx ? "Copied to clipboard" : "Copy time to clipboard"}
                   >
                     <Text style={styles.copyButtonText}>
                       {copied && activeResultIdx === idx ? "Copied!" : "Copy"}
                     </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.shareButton}
+                    onPress={() => shareResult(idx)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Share this time"
+                  >
+                    <Text style={styles.shareButtonText}>Share</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.calendarButton}
@@ -362,6 +394,8 @@ export default function App() {
                       setEditingTask(undefined);
                       setModalVisible(true);
                     }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add this time to calendar as a task"
                   >
                     <Text style={styles.calendarButtonText}>Add to Calendar</Text>
                   </TouchableOpacity>
@@ -389,7 +423,11 @@ export default function App() {
               <View style={styles.historyContainer}>
                 <View style={styles.historyHeader}>
                   <Text style={styles.historyTitle}>History</Text>
-                  <TouchableOpacity onPress={() => setHistory([])}>
+                  <TouchableOpacity
+                    onPress={() => setHistory([])}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear history"
+                  >
                     <Text style={styles.clearText}>Clear</Text>
                   </TouchableOpacity>
                 </View>
@@ -420,6 +458,11 @@ export default function App() {
             )}
 
             {/* Saved tasks */}
+            {dbReady && tasks.length === 0 && (
+              <Text style={styles.emptyTasks}>
+                No saved tasks yet. Generate a time and tap "Add to Calendar".
+              </Text>
+            )}
             {dbReady && tasks.length > 0 && (
               <TaskList
                 displayedTasks={displayedTasks}
@@ -615,6 +658,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
+  shareButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: `${darkColors.success}88`,
+  },
+  shareButtonText: {
+    color: darkColors.success,
+    fontSize: 14,
+    fontWeight: "600",
+  },
   calendarButton: {
     paddingVertical: 8,
     paddingHorizontal: 20,
@@ -676,6 +731,14 @@ const styles = StyleSheet.create({
   },
   historyTimeLatest: {
     color: darkColors.accent,
+  },
+  emptyTasks: {
+    marginTop: 32,
+    color: darkColors.textDim,
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 20,
+    maxWidth: 280,
   },
   settingsToggle: {
     alignSelf: "flex-end",

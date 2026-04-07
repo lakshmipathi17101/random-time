@@ -43,6 +43,8 @@ export default function TaskListItem({
     <TouchableOpacity
       onLongPress={() => onLongPress(task)}
       activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={`Task: ${task.title}. ${isDone ? "Done" : "Pending"}. Long press to select.`}
       style={[
         styles.taskItem,
         isDone && styles.taskItemDone,
@@ -52,6 +54,9 @@ export default function TaskListItem({
       <TouchableOpacity
         style={[styles.checkbox, isDone && styles.checkboxDone]}
         onPress={() => onToggleDone(task)}
+        accessibilityRole="checkbox"
+        accessibilityLabel={isDone ? "Mark as pending" : "Mark as done"}
+        accessibilityState={{ checked: isDone }}
       >
         {isDone && <Text style={styles.checkmark}>✓</Text>}
       </TouchableOpacity>
@@ -65,7 +70,7 @@ export default function TaskListItem({
             month: "short",
             day: "numeric",
           })}{" "}
-          · {timeLabel} · -{task.reminder_minutes} min reminder
+          · {timeLabel} · {task.reminder_minutes} min reminder
         </Text>
         {(task.category || task.priority) && (
           <View style={styles.taskBadgeRow}>
@@ -104,24 +109,32 @@ export default function TaskListItem({
         <TouchableOpacity
           style={styles.taskShareButton}
           onPress={() => onShare(task)}
+          accessibilityRole="button"
+          accessibilityLabel="Share task"
         >
           <Text style={styles.taskShareText}>↑</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.taskEditButton}
           onPress={() => onEdit(task)}
+          accessibilityRole="button"
+          accessibilityLabel="Edit task"
         >
           <Text style={styles.taskEditText}>✎</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.taskPostponeButton}
           onPress={() => onPostpone(task)}
+          accessibilityRole="button"
+          accessibilityLabel="Postpone task to a new random time"
         >
           <Text style={styles.taskPostponeText}>↻</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.taskDeleteButton}
           onPress={() => onDelete(task)}
+          accessibilityRole="button"
+          accessibilityLabel="Delete task"
         >
           <Text style={styles.taskDeleteText}>✕</Text>
         </TouchableOpacity>
