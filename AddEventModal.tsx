@@ -34,16 +34,151 @@ import {
   TaskPriority,
 } from "./db";
 import * as Haptics from "expo-haptics";
-import { darkColors } from "./theme";
+import { useTheme } from "./context/ThemeContext";
+import { Colors } from "./theme";
 
 const REMINDER_OPTIONS = [5, 10, 15, 30] as const;
 const CATEGORY_OPTIONS: TaskCategory[] = ["Work", "Personal", "Health", "Other"];
 const PRIORITY_OPTIONS: TaskPriority[] = ["High", "Medium", "Low"];
 
-function priorityChipColor(p: TaskPriority): string {
-  if (p === "High") return darkColors.danger;
-  if (p === "Medium") return darkColors.warning;
-  return darkColors.success;
+function priorityChipColor(p: TaskPriority, colors: Colors): string {
+  if (p === "High") return colors.danger;
+  if (p === "Medium") return colors.warning;
+  return colors.success;
+}
+
+function makeStyles(colors: Colors) {
+  return StyleSheet.create({
+    overlay: {
+      flex: 1,
+      justifyContent: "flex-end",
+      backgroundColor: "rgba(0,0,0,0.6)",
+    },
+    sheet: {
+      backgroundColor: colors.bgCard,
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      padding: 24,
+      paddingBottom: 40,
+      maxHeight: "90%",
+    },
+    title: {
+      fontSize: 22,
+      fontWeight: "800",
+      color: colors.text,
+      marginBottom: 20,
+      textAlign: "center",
+    },
+    label: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: colors.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 1.2,
+      marginBottom: 8,
+      marginTop: 12,
+    },
+    labelSmall: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: colors.textDim,
+      marginBottom: 6,
+      marginTop: 10,
+    },
+    textInput: {
+      backgroundColor: colors.bgInput,
+      color: colors.text,
+      fontSize: 16,
+      borderRadius: 12,
+      padding: 14,
+      borderWidth: 2,
+      borderColor: colors.bgBorder,
+    },
+    dateButton: {
+      backgroundColor: colors.bgInput,
+      borderRadius: 12,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.bgBorder,
+    },
+    dateButtonText: {
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: "600",
+    },
+    textInputMultiline: {
+      minHeight: 72,
+      textAlignVertical: "top",
+    },
+    textInputSmall: {
+      backgroundColor: colors.bgInput,
+      color: colors.text,
+      fontSize: 15,
+      borderRadius: 10,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: colors.bgBorder,
+      width: 100,
+    },
+    chipRow: {
+      flexDirection: "row",
+      gap: 10,
+      marginTop: 4,
+      flexWrap: "wrap",
+    },
+    chip: {
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      borderRadius: 20,
+      backgroundColor: colors.bgInput,
+      borderWidth: 1,
+      borderColor: colors.bgBorder,
+    },
+    chipActive: {
+      backgroundColor: colors.accent,
+      borderColor: colors.accent,
+    },
+    chipText: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: colors.textMuted,
+    },
+    chipTextActive: {
+      color: colors.text,
+    },
+    buttonRow: {
+      flexDirection: "row",
+      gap: 12,
+      marginTop: 28,
+      marginBottom: 8,
+    },
+    cancelButton: {
+      flex: 1,
+      paddingVertical: 14,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.bgBorder,
+      alignItems: "center",
+    },
+    cancelText: {
+      color: colors.textMuted,
+      fontSize: 16,
+      fontWeight: "600",
+    },
+    saveButton: {
+      flex: 1,
+      paddingVertical: 14,
+      borderRadius: 14,
+      backgroundColor: colors.accent,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    saveText: {
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: "700",
+    },
+  });
 }
 
 interface AddEventModalProps {
@@ -67,6 +202,9 @@ export default function AddEventModal({
   editTask,
   defaultReminderMin = 10,
 }: AddEventModalProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
+
   const [taskName, setTaskName] = useState("");
   const [notes, setNotes] = useState("");
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
@@ -292,7 +430,7 @@ export default function AddEventModal({
             <TextInput
               style={styles.textInput}
               placeholder="e.g. Team standup"
-              placeholderTextColor={darkColors.textDim}
+              placeholderTextColor={colors.textDim}
               value={taskName}
               onChangeText={setTaskName}
               autoFocus
@@ -333,7 +471,7 @@ export default function AddEventModal({
             <TextInput
               style={[styles.textInput, styles.textInputMultiline]}
               placeholder="Add a note…"
-              placeholderTextColor={darkColors.textDim}
+              placeholderTextColor={colors.textDim}
               value={notes}
               onChangeText={setNotes}
               multiline
@@ -360,7 +498,7 @@ export default function AddEventModal({
             <Text style={styles.label}>Priority</Text>
             <View style={styles.chipRow}>
               {PRIORITY_OPTIONS.map((p) => {
-                const color = priorityChipColor(p);
+                const color = priorityChipColor(p, colors);
                 const active = priority === p;
                 return (
                   <TouchableOpacity
@@ -410,7 +548,7 @@ export default function AddEventModal({
               style={styles.textInputSmall}
               keyboardType="number-pad"
               placeholder="e.g. 45"
-              placeholderTextColor={darkColors.textDim}
+              placeholderTextColor={colors.textDim}
               value={customMinutes}
               onChangeText={setCustomMinutes}
               maxLength={4}
@@ -432,7 +570,7 @@ export default function AddEventModal({
                 disabled={saving}
               >
                 {saving ? (
-                  <ActivityIndicator color={darkColors.text} size="small" />
+                  <ActivityIndicator color={colors.text} size="small" />
                 ) : (
                   <Text style={styles.saveText}>Save</Text>
                 )}
@@ -444,135 +582,3 @@ export default function AddEventModal({
     </Modal>
   );
 }
-
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.6)",
-  },
-  sheet: {
-    backgroundColor: darkColors.bgCard,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-    paddingBottom: 40,
-    maxHeight: "90%",
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: darkColors.text,
-    marginBottom: 20,
-    textAlign: "center",
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: darkColors.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
-    marginBottom: 8,
-    marginTop: 12,
-  },
-  labelSmall: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: darkColors.textDim,
-    marginBottom: 6,
-    marginTop: 10,
-  },
-  textInput: {
-    backgroundColor: darkColors.bgInput,
-    color: darkColors.text,
-    fontSize: 16,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 2,
-    borderColor: darkColors.bgBorder,
-  },
-  dateButton: {
-    backgroundColor: darkColors.bgInput,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: darkColors.bgBorder,
-  },
-  dateButtonText: {
-    color: darkColors.text,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  textInputMultiline: {
-    minHeight: 72,
-    textAlignVertical: "top",
-  },
-  textInputSmall: {
-    backgroundColor: darkColors.bgInput,
-    color: darkColors.text,
-    fontSize: 15,
-    borderRadius: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: darkColors.bgBorder,
-    width: 100,
-  },
-  chipRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 4,
-    flexWrap: "wrap",
-  },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    backgroundColor: darkColors.bgInput,
-    borderWidth: 1,
-    borderColor: darkColors.bgBorder,
-  },
-  chipActive: {
-    backgroundColor: darkColors.accent,
-    borderColor: darkColors.accent,
-  },
-  chipText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: darkColors.textMuted,
-  },
-  chipTextActive: {
-    color: darkColors.text,
-  },
-  buttonRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 28,
-    marginBottom: 8,
-  },
-  cancelButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: darkColors.bgBorder,
-    alignItems: "center",
-  },
-  cancelText: {
-    color: darkColors.textMuted,
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  saveButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
-    backgroundColor: darkColors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  saveText: {
-    color: darkColors.text,
-    fontSize: 16,
-    fontWeight: "700",
-  },
-});

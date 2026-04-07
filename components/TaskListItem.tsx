@@ -1,12 +1,13 @@
 import { StyleSheet, Text, View, TouchableOpacity } from "react-native";
 import { Task } from "../db";
-import { darkColors } from "../theme";
+import { useTheme } from "../context/ThemeContext";
+import { Colors } from "../theme";
 import { formatTime24, formatTime12 } from "../utils/timeUtils";
 
-export function priorityColor(p: string): string {
-  if (p === "High") return darkColors.danger;
-  if (p === "Medium") return darkColors.warning;
-  return darkColors.success;
+export function priorityColor(p: string, colors: Colors): string {
+  if (p === "High") return colors.danger;
+  if (p === "Medium") return colors.warning;
+  return colors.success;
 }
 
 function relativeDate(dateStr: string): string {
@@ -34,6 +35,171 @@ interface TaskListItemProps {
   onLongPress: (task: Task) => void;
 }
 
+function makeStyles(colors: Colors) {
+  return StyleSheet.create({
+    taskItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: colors.bgCard,
+      borderRadius: 10,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      marginBottom: 6,
+    },
+    taskItemToday: {
+      borderLeftWidth: 3,
+      borderLeftColor: colors.accent,
+    },
+    taskItemOverdue: {
+      borderLeftWidth: 3,
+      borderLeftColor: colors.danger,
+    },
+    taskItemDone: {
+      opacity: 0.5,
+    },
+    taskItemSelected: {
+      borderWidth: 1,
+      borderColor: colors.accent,
+      backgroundColor: "#1f1f35",
+    },
+    taskMetaToday: {
+      color: colors.accent,
+      fontWeight: "700",
+    },
+    checkbox: {
+      width: 22,
+      height: 22,
+      borderRadius: 6,
+      borderWidth: 2,
+      borderColor: colors.bgBorder,
+      marginRight: 12,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    checkboxDone: {
+      backgroundColor: colors.accent,
+      borderColor: colors.accent,
+    },
+    checkmark: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: "700",
+    },
+    taskInfo: {
+      flex: 1,
+    },
+    taskTitle: {
+      fontSize: 15,
+      fontWeight: "700",
+      color: colors.text,
+      marginBottom: 4,
+    },
+    taskTitleDone: {
+      textDecorationLine: "line-through",
+      color: colors.textDim,
+    },
+    taskMeta: {
+      fontSize: 12,
+      color: colors.textMuted,
+      letterSpacing: 0.5,
+    },
+    taskNotes: {
+      fontSize: 12,
+      color: colors.textDim,
+      marginTop: 4,
+      fontStyle: "italic",
+    },
+    taskBadgeRow: {
+      flexDirection: "row",
+      gap: 6,
+      marginTop: 6,
+      flexWrap: "wrap",
+    },
+    categoryBadge: {
+      backgroundColor: colors.bgInput,
+      borderRadius: 6,
+      paddingVertical: 2,
+      paddingHorizontal: 8,
+    },
+    categoryBadgeText: {
+      fontSize: 11,
+      color: colors.textMuted,
+      fontWeight: "600",
+    },
+    priorityBadge: {
+      borderRadius: 6,
+      borderWidth: 1,
+      paddingVertical: 2,
+      paddingHorizontal: 8,
+    },
+    priorityBadgeText: {
+      fontSize: 11,
+      fontWeight: "700",
+    },
+    taskActions: {
+      flexDirection: "row",
+      gap: 8,
+      alignItems: "center",
+    },
+    taskShareButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: `${colors.success}44`,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    taskShareText: {
+      color: colors.success,
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    taskEditButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: `${colors.textMuted}44`,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    taskEditText: {
+      color: colors.textMuted,
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    taskPostponeButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: `${colors.accent}44`,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    taskPostponeText: {
+      color: colors.accent,
+      fontSize: 16,
+      fontWeight: "700",
+    },
+    taskDeleteButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: `${colors.danger}44`,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    taskDeleteText: {
+      color: colors.danger,
+      fontSize: 14,
+      fontWeight: "700",
+    },
+  });
+}
+
 export default function TaskListItem({
   task,
   is24h,
@@ -45,6 +211,8 @@ export default function TaskListItem({
   selected,
   onLongPress,
 }: TaskListItemProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const eventDate = new Date(task.event_date);
   const h = eventDate.getHours();
   const m = eventDate.getMinutes();
@@ -98,13 +266,13 @@ export default function TaskListItem({
               <View
                 style={[
                   styles.priorityBadge,
-                  { borderColor: priorityColor(task.priority) },
+                  { borderColor: priorityColor(task.priority, colors) },
                 ]}
               >
                 <Text
                   style={[
                     styles.priorityBadgeText,
-                    { color: priorityColor(task.priority) },
+                    { color: priorityColor(task.priority, colors) },
                   ]}
                 >
                   {task.priority}
@@ -149,166 +317,3 @@ export default function TaskListItem({
     </TouchableOpacity>
   );
 }
-
-const styles = StyleSheet.create({
-  taskItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: darkColors.bgCard,
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginBottom: 6,
-  },
-  taskItemToday: {
-    borderLeftWidth: 3,
-    borderLeftColor: darkColors.accent,
-  },
-  taskItemOverdue: {
-    borderLeftWidth: 3,
-    borderLeftColor: darkColors.danger,
-  },
-  taskItemDone: {
-    opacity: 0.5,
-  },
-  taskItemSelected: {
-    borderWidth: 1,
-    borderColor: darkColors.accent,
-    backgroundColor: "#1f1f35",
-  },
-  taskMetaToday: {
-    color: darkColors.accent,
-    fontWeight: "700",
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: darkColors.bgBorder,
-    marginRight: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxDone: {
-    backgroundColor: darkColors.accent,
-    borderColor: darkColors.accent,
-  },
-  checkmark: {
-    color: darkColors.text,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  taskInfo: {
-    flex: 1,
-  },
-  taskTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: darkColors.text,
-    marginBottom: 4,
-  },
-  taskTitleDone: {
-    textDecorationLine: "line-through",
-    color: darkColors.textDim,
-  },
-  taskMeta: {
-    fontSize: 12,
-    color: darkColors.textMuted,
-    letterSpacing: 0.5,
-  },
-  taskNotes: {
-    fontSize: 12,
-    color: darkColors.textDim,
-    marginTop: 4,
-    fontStyle: "italic",
-  },
-  taskBadgeRow: {
-    flexDirection: "row",
-    gap: 6,
-    marginTop: 6,
-    flexWrap: "wrap",
-  },
-  categoryBadge: {
-    backgroundColor: darkColors.bgInput,
-    borderRadius: 6,
-    paddingVertical: 2,
-    paddingHorizontal: 8,
-  },
-  categoryBadgeText: {
-    fontSize: 11,
-    color: darkColors.textMuted,
-    fontWeight: "600",
-  },
-  priorityBadge: {
-    borderRadius: 6,
-    borderWidth: 1,
-    paddingVertical: 2,
-    paddingHorizontal: 8,
-  },
-  priorityBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  taskActions: {
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-  },
-  taskShareButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: `${darkColors.success}44`,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  taskShareText: {
-    color: darkColors.success,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  taskEditButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: `${darkColors.textMuted}44`,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  taskEditText: {
-    color: darkColors.textMuted,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  taskPostponeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: `${darkColors.accent}44`,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  taskPostponeText: {
-    color: darkColors.accent,
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  taskDeleteButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: `${darkColors.danger}44`,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  taskDeleteText: {
-    color: darkColors.danger,
-    fontSize: 14,
-    fontWeight: "700",
-  },
-});

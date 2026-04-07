@@ -18,6 +18,10 @@ export interface UseSettingsResult {
   setMaxS: (v: string) => void;
   defaultReminder: string;
   setDefaultReminder: (v: string) => void;
+  theme: "dark" | "light";
+  setTheme: (t: "dark" | "light") => void;
+  onboardingSeen: boolean;
+  setOnboardingSeen: (v: boolean) => void;
   settingsReady: boolean;
 }
 
@@ -30,6 +34,8 @@ export function useSettings(): UseSettingsResult {
   const [maxM, setMaxM] = useState("59");
   const [maxS, setMaxS] = useState("59");
   const [defaultReminder, setDefaultReminder] = useState("10");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [onboardingSeen, setOnboardingSeen] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
 
   // Guard: don't persist until the initial load is complete
@@ -47,6 +53,8 @@ export function useSettings(): UseSettingsResult {
       const savedMaxM = await getSetting("max_m");
       const savedMaxS = await getSetting("max_s");
       const savedDefaultReminder = await getSetting("default_reminder");
+      const savedTheme = await getSetting("theme");
+      const savedOnboarding = await getSetting("onboarding_seen");
 
       if (saved24h !== null) setIs24h(saved24h === "true");
       if (savedMinH !== null) setMinH(savedMinH);
@@ -56,6 +64,8 @@ export function useSettings(): UseSettingsResult {
       if (savedMaxM !== null) setMaxM(savedMaxM);
       if (savedMaxS !== null) setMaxS(savedMaxS);
       if (savedDefaultReminder !== null) setDefaultReminder(savedDefaultReminder);
+      if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
+      if (savedOnboarding === "true") setOnboardingSeen(true);
 
       persistRef.current = true;
       setSettingsReady(true);
@@ -88,6 +98,16 @@ export function useSettings(): UseSettingsResult {
     upsertSetting("default_reminder", defaultReminder);
   }, [defaultReminder]);
 
+  useEffect(() => {
+    if (!persistRef.current) return;
+    upsertSetting("theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (!persistRef.current) return;
+    upsertSetting("onboarding_seen", String(onboardingSeen));
+  }, [onboardingSeen]);
+
   return {
     is24h,
     setIs24h,
@@ -105,6 +125,10 @@ export function useSettings(): UseSettingsResult {
     setMaxS,
     defaultReminder,
     setDefaultReminder,
+    theme,
+    setTheme,
+    onboardingSeen,
+    setOnboardingSeen,
     settingsReady,
   };
 }

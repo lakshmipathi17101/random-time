@@ -34,7 +34,8 @@ export type SettingKey =
   | "theme"
   | "exclude_blocks"
   | "weighted_random"
-  | "onboarded";
+  | "onboarded"
+  | "onboarding_seen";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 

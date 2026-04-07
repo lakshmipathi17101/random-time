@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View, TextInput } from "react-native";
-import { darkColors } from "../theme";
+import { useTheme } from "../context/ThemeContext";
+import { Colors } from "../theme";
 
 interface TimeInputProps {
   label: string;
@@ -20,6 +21,8 @@ export default function TimeInput({
   onChangeMinutes,
   onChangeSeconds,
 }: TimeInputProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <View style={styles.timeInputGroup}>
       <Text style={styles.label}>{label}</Text>
@@ -32,7 +35,7 @@ export default function TimeInput({
             value={hours}
             onChangeText={onChangeHours}
             placeholder="HH"
-            placeholderTextColor={darkColors.textDim}
+            placeholderTextColor={colors.textDim}
           />
           <Text style={styles.inputLabel}>hrs</Text>
         </View>
@@ -45,7 +48,7 @@ export default function TimeInput({
             value={minutes}
             onChangeText={onChangeMinutes}
             placeholder="MM"
-            placeholderTextColor={darkColors.textDim}
+            placeholderTextColor={colors.textDim}
           />
           <Text style={styles.inputLabel}>min</Text>
         </View>
@@ -58,7 +61,7 @@ export default function TimeInput({
             value={seconds}
             onChangeText={onChangeSeconds}
             placeholder="SS"
-            placeholderTextColor={darkColors.textDim}
+            placeholderTextColor={colors.textDim}
           />
           <Text style={styles.inputLabel}>sec</Text>
         </View>
@@ -67,14 +70,14 @@ export default function TimeInput({
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(colors: Colors) { return StyleSheet.create({
   timeInputGroup: {
     marginVertical: 8,
   },
   label: {
     fontSize: 14,
     fontWeight: "600",
-    color: darkColors.textMuted,
+    color: colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 1.5,
     marginBottom: 12,
@@ -88,8 +91,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   input: {
-    backgroundColor: darkColors.bgInput,
-    color: darkColors.text,
+    backgroundColor: colors.bgInput,
+    color: colors.text,
     fontSize: 28,
     fontWeight: "700",
     textAlign: "center",
@@ -97,18 +100,18 @@ const styles = StyleSheet.create({
     height: 56,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: darkColors.bgBorder,
+    borderColor: colors.bgBorder,
   },
   inputLabel: {
     fontSize: 11,
-    color: darkColors.textDim,
+    color: colors.textDim,
     marginTop: 4,
   },
   colon: {
     fontSize: 28,
     fontWeight: "700",
-    color: darkColors.accent,
+    color: colors.accent,
     marginHorizontal: 6,
     marginBottom: 16,
   },
-});
+}); }

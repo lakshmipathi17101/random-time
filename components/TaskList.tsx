@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View, TextInput, TouchableOpacity } from "react-native";
 import { Task } from "../db";
-import { darkColors } from "../theme";
+import { useTheme } from "../context/ThemeContext";
+import { Colors } from "../theme";
 import TaskListItem from "./TaskListItem";
 
 interface TaskListProps {
@@ -22,6 +23,111 @@ interface TaskListProps {
   onBulkDelete: () => void;
 }
 
+function makeStyles(colors: Colors) {
+  return StyleSheet.create({
+    taskListContainer: {
+      marginTop: 32,
+      width: "100%",
+      maxWidth: 400,
+    },
+    taskListHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 10,
+    },
+    taskListTitle: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: colors.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 1.5,
+      marginBottom: 12,
+    },
+    bulkDeleteButton: {
+      paddingVertical: 4,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      backgroundColor: `${colors.danger}22`,
+      borderWidth: 1,
+      borderColor: `${colors.danger}44`,
+    },
+    bulkDeleteText: {
+      color: colors.danger,
+      fontSize: 12,
+      fontWeight: "700",
+    },
+    searchInput: {
+      backgroundColor: colors.bgCard,
+      color: colors.text,
+      fontSize: 14,
+      borderRadius: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      borderWidth: 1,
+      borderColor: colors.bgBorder,
+      marginBottom: 10,
+      width: "100%",
+    },
+    filterRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      marginBottom: 10,
+      flexWrap: "wrap",
+    },
+    filterChip: {
+      paddingVertical: 4,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      backgroundColor: colors.bgCard,
+      borderWidth: 1,
+      borderColor: colors.bgBorder,
+    },
+    filterChipActive: {
+      backgroundColor: `${colors.accent}22`,
+      borderColor: colors.accent,
+    },
+    filterChipText: {
+      fontSize: 12,
+      color: colors.textMuted,
+      fontWeight: "600",
+    },
+    filterChipTextActive: {
+      color: colors.accent,
+    },
+    filterSpacer: {
+      flex: 1,
+    },
+    sortChip: {
+      paddingVertical: 4,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      backgroundColor: colors.bgCard,
+      borderWidth: 1,
+      borderColor: colors.bgBorder,
+    },
+    sortChipActive: {
+      backgroundColor: colors.bgInput,
+      borderColor: colors.textMuted,
+    },
+    sortChipText: {
+      fontSize: 11,
+      color: colors.textDim,
+      fontWeight: "600",
+    },
+    sortChipTextActive: {
+      color: "#aaaacc",
+    },
+    emptyText: {
+      color: colors.textDim,
+      fontSize: 13,
+      textAlign: "center",
+      marginTop: 12,
+    },
+  });
+}
+
 export default function TaskList({
   displayedTasks,
   is24h,
@@ -40,6 +146,9 @@ export default function TaskList({
   onLongPress,
   onBulkDelete,
 }: TaskListProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
+
   return (
     <View style={styles.taskListContainer}>
       <View style={styles.taskListHeader}>
@@ -54,7 +163,7 @@ export default function TaskList({
       <TextInput
         style={styles.searchInput}
         placeholder="Search tasks…"
-        placeholderTextColor={darkColors.textDim}
+        placeholderTextColor={colors.textDim}
         value={searchQuery}
         onChangeText={onSearchChange}
       />
@@ -116,106 +225,3 @@ export default function TaskList({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  taskListContainer: {
-    marginTop: 32,
-    width: "100%",
-    maxWidth: 400,
-  },
-  taskListHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  taskListTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: darkColors.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
-    marginBottom: 12,
-  },
-  bulkDeleteButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: `${darkColors.danger}22`,
-    borderWidth: 1,
-    borderColor: `${darkColors.danger}44`,
-  },
-  bulkDeleteText: {
-    color: darkColors.danger,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  searchInput: {
-    backgroundColor: darkColors.bgCard,
-    color: darkColors.text,
-    fontSize: 14,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: darkColors.bgBorder,
-    marginBottom: 10,
-    width: "100%",
-  },
-  filterRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 10,
-    flexWrap: "wrap",
-  },
-  filterChip: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: darkColors.bgCard,
-    borderWidth: 1,
-    borderColor: darkColors.bgBorder,
-  },
-  filterChipActive: {
-    backgroundColor: `${darkColors.accent}22`,
-    borderColor: darkColors.accent,
-  },
-  filterChipText: {
-    fontSize: 12,
-    color: darkColors.textMuted,
-    fontWeight: "600",
-  },
-  filterChipTextActive: {
-    color: darkColors.accent,
-  },
-  filterSpacer: {
-    flex: 1,
-  },
-  sortChip: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: darkColors.bgCard,
-    borderWidth: 1,
-    borderColor: darkColors.bgBorder,
-  },
-  sortChipActive: {
-    backgroundColor: darkColors.bgInput,
-    borderColor: darkColors.textMuted,
-  },
-  sortChipText: {
-    fontSize: 11,
-    color: darkColors.textDim,
-    fontWeight: "600",
-  },
-  sortChipTextActive: {
-    color: "#aaaacc",
-  },
-  emptyText: {
-    color: darkColors.textDim,
-    fontSize: 13,
-    textAlign: "center",
-    marginTop: 12,
-  },
-});

@@ -21,11 +21,12 @@ import {
   scheduleAlarm,
   setupNotificationResponseHandler,
 } from "./notificationService";
-import { darkColors } from "./theme";
+import { ThemeProvider, useTheme } from "./context/ThemeContext";
 import TimeInput from "./components/TimeInput";
 import TaskList from "./components/TaskList";
 import StatsPanel from "./components/StatsPanel";
 import SettingsPanel from "./components/SettingsPanel";
+import OnboardingScreen from "./components/OnboardingScreen";
 import { useSettings } from "./hooks/useSettings";
 import { useTasks } from "./hooks/useTasks";
 import {
@@ -47,6 +48,16 @@ interface HistoryEntry {
 
 export default function App() {
   const settings = useSettings();
+  return (
+    <ThemeProvider theme={settings.theme}>
+      <AppShell settings={settings} />
+    </ThemeProvider>
+  );
+}
+
+// Inner component so useTheme() can access the provider above
+function AppShell({ settings }: { settings: ReturnType<typeof useSettings> }) {
+  const { colors, theme } = useTheme();
   const {
     tasks,
     dbReady,
@@ -77,25 +88,16 @@ export default function App() {
   const [editingTask, setEditingTask] = useState<Task | undefined>(undefined);
   const [settingsVisible, setSettingsVisible] = useState(false);
 
-  // Load tasks once the DB + settings are ready
   useEffect(() => {
-    if (settings.settingsReady) {
-      loadTasks();
-    }
+    if (settings.settingsReady) loadTasks();
   }, [settings.settingsReady, loadTasks]);
-
-  // ── helpers ──────────────────────────────────────────────────────────────
 
   function buildRandomDate(task: Task): Date {
     const minTotal = timeToSeconds(
-      parseVal(settings.minH, 23),
-      parseVal(settings.minM, 59),
-      parseVal(settings.minS, 59)
+      parseVal(settings.minH, 23), parseVal(settings.minM, 59), parseVal(settings.minS, 59)
     );
     const maxTotal = timeToSeconds(
-      parseVal(settings.maxH, 23),
-      parseVal(settings.maxM, 59),
-      parseVal(settings.maxS, 59)
+      parseVal(settings.maxH, 23), parseVal(settings.maxM, 59), parseVal(settings.maxS, 59)
     );
     const range = Math.max(maxTotal - minTotal, 0);
     const randomTotal = Math.floor(Math.random() * (range + 1)) + minTotal;
@@ -104,14 +106,9 @@ export default function App() {
     return new Date(orig.getFullYear(), orig.getMonth(), orig.getDate(), h, m, s);
   }
 
-  // ── notification response handler (Done / Postpone from tray) ────────────
-
   useEffect(() => {
     const cleanup = setupNotificationResponseHandler(
-      async (taskId) => {
-        await updateTaskStatus(taskId, "done");
-        await loadTasks();
-      },
+      async (taskId) => { await updateTaskStatus(taskId, "done"); await loadTasks(); },
       async (taskId) => {
         const task = (await getTasks()).find((t) => t.id === taskId);
         if (!task) return;
@@ -119,65 +116,28 @@ export default function App() {
         await cancelTaskNotifications(task);
         const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
         const alarmId = await scheduleAlarm(task.title, newDate, task.id);
-        await updateTaskTime(
-          task.id,
-          newDate.toISOString(),
-          alarmId,
-          reminderId,
-          null
-        );
+        await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId, null);
         await loadTasks();
       }
     );
     return cleanup;
-    // Re-register when the range changes so postpone uses the current range
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    loadTasks,
-    settings.minH,
-    settings.minM,
-    settings.minS,
-    settings.maxH,
-    settings.maxM,
-    settings.maxS,
-  ]);
+  }, [loadTasks, settings.minH, settings.minM, settings.minS, settings.maxH, settings.maxM, settings.maxS]);
 
-  // ── task action handlers ──────────────────────────────────────────────────
-
-  const handlePostpone = useCallback(
-    async (task: Task) => {
-      const newDate = buildRandomDate(task);
-      await cancelTaskNotifications(task);
-      const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
-      const alarmId = await scheduleAlarm(task.title, newDate, task.id);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      await updateTaskTime(
-        task.id,
-        newDate.toISOString(),
-        alarmId,
-        reminderId,
-        null
-      );
-      await loadTasks();
-    },
+  const handlePostpone = useCallback(async (task: Task) => {
+    const newDate = buildRandomDate(task);
+    await cancelTaskNotifications(task);
+    const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
+    const alarmId = await scheduleAlarm(task.title, newDate, task.id);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId, null);
+    await loadTasks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      loadTasks,
-      settings.minH,
-      settings.minM,
-      settings.minS,
-      settings.maxH,
-      settings.maxM,
-      settings.maxS,
-    ]
-  );
+  }, [loadTasks, settings.minH, settings.minM, settings.minS, settings.maxH, settings.maxM, settings.maxS]);
 
   const handleEditTask = useCallback((task: Task) => {
-    setEditingTask(task);
-    setModalVisible(true);
+    setEditingTask(task); setModalVisible(true);
   }, []);
-
-  // ── generator ─────────────────────────────────────────────────────────────
 
   const formatResult = useCallback(
     (h: number, m: number, s: number) =>
@@ -186,61 +146,36 @@ export default function App() {
   );
 
   const generate = () => {
-    const minTotal = timeToSeconds(
-      parseVal(settings.minH, 23),
-      parseVal(settings.minM, 59),
-      parseVal(settings.minS, 59)
-    );
-    const maxTotal = timeToSeconds(
-      parseVal(settings.maxH, 23),
-      parseVal(settings.maxM, 59),
-      parseVal(settings.maxS, 59)
-    );
-
-    if (minTotal > maxTotal) {
-      setError("Min time must be less than or equal to max time");
-      setResults([]);
-      return;
-    }
-
-    setError(null);
-    setCopied(false);
-    setActiveResultIdx(0);
+    const minTotal = timeToSeconds(parseVal(settings.minH,23),parseVal(settings.minM,59),parseVal(settings.minS,59));
+    const maxTotal = timeToSeconds(parseVal(settings.maxH,23),parseVal(settings.maxM,59),parseVal(settings.maxS,59));
+    if (minTotal > maxTotal) { setError("Min time must be less than or equal to max time"); setResults([]); return; }
+    setError(null); setCopied(false); setActiveResultIdx(0);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
     const generated: { h: number; m: number; s: number }[] = [];
     for (let i = 0; i < generateCount; i++) {
-      const randomTotal =
-        Math.floor(Math.random() * (maxTotal - minTotal + 1)) + minTotal;
-      generated.push(secondsToTime(randomTotal));
+      generated.push(secondsToTime(Math.floor(Math.random() * (maxTotal - minTotal + 1)) + minTotal));
     }
     setResults(generated);
-
-    const entry: HistoryEntry = {
-      id: Date.now().toString(),
-      h: generated[0].h,
-      m: generated[0].m,
-      s: generated[0].s,
-    };
-    setHistory((prev) => [entry, ...prev].slice(0, MAX_HISTORY));
+    setHistory((prev) => [{ id: Date.now().toString(), ...generated[0] }, ...prev].slice(0, MAX_HISTORY));
   };
 
   const copyToClipboard = async (idx: number) => {
-    const r = results[idx];
-    if (!r) return;
+    const r = results[idx]; if (!r) return;
     await Clipboard.setStringAsync(formatResult(r.h, r.m, r.s));
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setActiveResultIdx(idx);
-    setCopied(true);
+    setActiveResultIdx(idx); setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ── render ────────────────────────────────────────────────────────────────
+  const styles = makeAppStyles(colors);
 
   return (
     <SafeAreaProvider>
+      {!settings.onboardingSeen && settings.settingsReady && (
+        <OnboardingScreen onDone={() => settings.setOnboardingSeen(true)} />
+      )}
       <SafeAreaView style={styles.container}>
-        <StatusBar style="light" />
+        <StatusBar style={theme === "dark" ? "light" : "dark"} />
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={styles.flex}
@@ -267,6 +202,8 @@ export default function App() {
                 defaultReminder={settings.defaultReminder}
                 onChangeDefaultReminder={settings.setDefaultReminder}
                 onDeleteAllDone={handleDeleteAllDone}
+                theme={settings.theme}
+                onChangeTheme={settings.setTheme}
               />
             )}
 
@@ -462,10 +399,10 @@ export default function App() {
   );
 }
 
-const styles = StyleSheet.create({
+function makeAppStyles(colors: ReturnType<typeof useTheme>["colors"]) { return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: darkColors.bg,
+    backgroundColor: colors.bg,
   },
   flex: {
     flex: 1,
@@ -480,13 +417,13 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 36,
     fontWeight: "800",
-    color: darkColors.text,
+    color: colors.text,
     textAlign: "center",
   },
   subtitle: {
     fontSize: 36,
     fontWeight: "800",
-    color: darkColors.accent,
+    color: colors.accent,
     textAlign: "center",
     marginBottom: 24,
   },
@@ -499,16 +436,16 @@ const styles = StyleSheet.create({
   toggleOption: {
     fontSize: 14,
     fontWeight: "700",
-    color: darkColors.textDim,
+    color: colors.textDim,
   },
   toggleActive: {
-    color: darkColors.accent,
+    color: colors.accent,
   },
   toggleTrack: {
     width: 44,
     height: 24,
     borderRadius: 12,
-    backgroundColor: darkColors.bgInput,
+    backgroundColor: colors.bgInput,
     justifyContent: "center",
     paddingHorizontal: 2,
   },
@@ -516,13 +453,13 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: darkColors.accent,
+    backgroundColor: colors.accent,
   },
   toggleThumbRight: {
     alignSelf: "flex-end",
   },
   card: {
-    backgroundColor: darkColors.bgCard,
+    backgroundColor: colors.bgCard,
     borderRadius: 20,
     padding: 24,
     width: "100%",
@@ -530,11 +467,11 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: darkColors.bgInput,
+    backgroundColor: colors.bgInput,
     marginVertical: 16,
   },
   error: {
-    color: darkColors.danger,
+    color: colors.danger,
     fontSize: 14,
     marginTop: 16,
     textAlign: "center",
@@ -551,30 +488,30 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 14,
     borderRadius: 14,
-    backgroundColor: darkColors.bgCard,
+    backgroundColor: colors.bgCard,
     borderWidth: 1,
-    borderColor: darkColors.bgBorder,
+    borderColor: colors.bgBorder,
     alignItems: "center",
     justifyContent: "center",
   },
   countChipActive: {
-    backgroundColor: darkColors.accentDim,
-    borderColor: darkColors.accent,
+    backgroundColor: colors.accentDim,
+    borderColor: colors.accent,
   },
   countChipText: {
-    color: darkColors.textMuted,
+    color: colors.textMuted,
     fontSize: 15,
     fontWeight: "700",
   },
   countChipTextActive: {
-    color: darkColors.accent,
+    color: colors.accent,
   },
   buttonFlex: {
     flex: 1,
     marginTop: 0,
   },
   button: {
-    backgroundColor: darkColors.accent,
+    backgroundColor: colors.accent,
     paddingVertical: 16,
     paddingHorizontal: 48,
     borderRadius: 16,
@@ -582,14 +519,14 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 400,
     alignItems: "center",
-    shadowColor: darkColors.accent,
+    shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 5,
   },
   buttonText: {
-    color: darkColors.text,
+    color: colors.text,
     fontSize: 18,
     fontWeight: "700",
   },
@@ -599,7 +536,7 @@ const styles = StyleSheet.create({
   },
   resultLabel: {
     fontSize: 14,
-    color: darkColors.textMuted,
+    color: colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 1.5,
     marginBottom: 8,
@@ -607,7 +544,7 @@ const styles = StyleSheet.create({
   result: {
     fontSize: 48,
     fontWeight: "800",
-    color: darkColors.accent,
+    color: colors.accent,
     letterSpacing: 3,
   },
   actionRow: {
@@ -620,10 +557,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: darkColors.accent,
+    borderColor: colors.accent,
   },
   copyButtonText: {
-    color: darkColors.accent,
+    color: colors.accent,
     fontSize: 14,
     fontWeight: "600",
   },
@@ -631,10 +568,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 20,
     borderRadius: 8,
-    backgroundColor: darkColors.accent,
+    backgroundColor: colors.accent,
   },
   calendarButtonText: {
-    color: darkColors.text,
+    color: colors.text,
     fontSize: 14,
     fontWeight: "600",
   },
@@ -652,19 +589,19 @@ const styles = StyleSheet.create({
   historyTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: darkColors.textMuted,
+    color: colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 1.5,
   },
   clearText: {
     fontSize: 13,
-    color: darkColors.danger,
+    color: colors.danger,
     fontWeight: "600",
   },
   historyItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: darkColors.bgCard,
+    backgroundColor: colors.bgCard,
     borderRadius: 10,
     paddingVertical: 10,
     paddingHorizontal: 16,
@@ -672,11 +609,11 @@ const styles = StyleSheet.create({
   },
   historyItemLatest: {
     borderWidth: 1,
-    borderColor: darkColors.accentDim,
+    borderColor: colors.accentDim,
   },
   historyIndex: {
     fontSize: 13,
-    color: darkColors.textDim,
+    color: colors.textDim,
     fontWeight: "600",
     width: 32,
   },
@@ -687,7 +624,7 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
   },
   historyTimeLatest: {
-    color: darkColors.accent,
+    color: colors.accent,
   },
   settingsToggle: {
     alignSelf: "flex-end",
@@ -695,11 +632,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: darkColors.bgBorder,
+    borderColor: colors.bgBorder,
     marginBottom: 8,
   },
   settingsToggleText: {
-    color: darkColors.textMuted,
+    color: colors.textMuted,
     fontSize: 12,
     fontWeight: "600",
   },
@@ -717,17 +654,17 @@ const styles = StyleSheet.create({
   emptyStateTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: darkColors.textMuted,
+    color: colors.textMuted,
     marginBottom: 8,
   },
   emptyStateBody: {
     fontSize: 14,
-    color: darkColors.textDim,
+    color: colors.textDim,
     textAlign: "center",
     lineHeight: 22,
   },
   emptyStateHighlight: {
-    color: darkColors.accent,
+    color: colors.accent,
     fontWeight: "700",
   },
-});
+}); }  // end makeAppStyles
