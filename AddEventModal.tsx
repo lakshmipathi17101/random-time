@@ -170,12 +170,27 @@ export default function AddEventModal({
         // ── Create mode ────────────────────────────────────────────────────
         const calGranted = await requestCalendarPermission();
         if (!calGranted) {
-          Alert.alert("Permission denied", "Calendar access is needed to create events.");
+          Alert.alert(
+            "Calendar permission needed",
+            "Please allow calendar access in your device Settings so RandomTime can save events.",
+          );
           setSaving(false);
           return;
         }
 
-        const calendarEventId = await createCalendarEvent(name, eventDate);
+        let calendarEventId: string | null = null;
+        try {
+          calendarEventId = await createCalendarEvent(name, eventDate);
+        } catch (calErr) {
+          // Calendar creation failed (e.g. no Google account on device).
+          // We still save the task locally with reminders — just without a
+          // calendar event. User is informed.
+          Alert.alert(
+            "Calendar unavailable",
+            "The task will be saved with reminders, but no calendar event could be created. " +
+              "Make sure a Google account is added to your device Calendar app and try again.",
+          );
+        }
 
         // Insert first so we have the task ID for the alarm notification
         const newTaskId = await insertTask({

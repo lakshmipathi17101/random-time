@@ -9,6 +9,19 @@ export function priorityColor(p: string): string {
   return darkColors.success;
 }
 
+function relativeDate(dateStr: string): string {
+  const today = new Date();
+  const d = new Date(dateStr);
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.round((dMidnight.getTime() - todayMidnight.getTime()) / 86400000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Tomorrow";
+  if (diffDays === -1) return "Yesterday";
+  if (diffDays > 1 && diffDays < 7) return `In ${diffDays} days`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 interface TaskListItemProps {
   task: Task;
   is24h: boolean;
@@ -38,6 +51,10 @@ export default function TaskListItem({
   const s = eventDate.getSeconds();
   const timeLabel = is24h ? formatTime24(h, m, s) : formatTime12(h, m, s);
   const isDone = task.status === "done";
+  const dateLabel = relativeDate(task.event_date);
+  const isToday = dateLabel === "Today";
+  const isOverdue =
+    !isDone && new Date(task.event_date).getTime() < Date.now();
 
   return (
     <TouchableOpacity
@@ -45,6 +62,8 @@ export default function TaskListItem({
       activeOpacity={0.8}
       style={[
         styles.taskItem,
+        isToday && !isDone && styles.taskItemToday,
+        isOverdue && styles.taskItemOverdue,
         isDone && styles.taskItemDone,
         selected && styles.taskItemSelected,
       ]}
@@ -61,11 +80,12 @@ export default function TaskListItem({
           {task.title}
         </Text>
         <Text style={styles.taskMeta}>
-          {eventDate.toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-          })}{" "}
-          · {timeLabel} · -{task.reminder_minutes} min reminder
+          <Text style={isToday && !isDone ? styles.taskMetaToday : undefined}>
+            {dateLabel}
+          </Text>
+          {" · "}
+          {timeLabel}
+          {isOverdue && !isDone ? "  ⚠ overdue" : ""}
         </Text>
         {(task.category || task.priority) && (
           <View style={styles.taskBadgeRow}>
@@ -140,13 +160,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 6,
   },
+  taskItemToday: {
+    borderLeftWidth: 3,
+    borderLeftColor: darkColors.accent,
+  },
+  taskItemOverdue: {
+    borderLeftWidth: 3,
+    borderLeftColor: darkColors.danger,
+  },
   taskItemDone: {
-    opacity: 0.6,
+    opacity: 0.5,
   },
   taskItemSelected: {
     borderWidth: 1,
     borderColor: darkColors.accent,
     backgroundColor: "#1f1f35",
+  },
+  taskMetaToday: {
+    color: darkColors.accent,
+    fontWeight: "700",
   },
   checkbox: {
     width: 22,

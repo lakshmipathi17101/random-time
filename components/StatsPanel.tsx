@@ -7,7 +7,14 @@ interface StatsPanelProps {
 }
 
 export default function StatsPanel({ tasks }: StatsPanelProps) {
+  const now = Date.now();
   const doneCount = tasks.filter((t) => t.status === "done").length;
+  const upcomingCount = tasks.filter(
+    (t) => t.status === "pending" && new Date(t.event_date).getTime() >= now
+  ).length;
+  const overdueCount = tasks.filter(
+    (t) => t.status === "pending" && new Date(t.event_date).getTime() < now
+  ).length;
   const completionPct =
     tasks.length > 0 ? Math.round((doneCount / tasks.length) * 100) : 0;
 
@@ -16,20 +23,33 @@ export default function StatsPanel({ tasks }: StatsPanelProps) {
       <Text style={styles.statsTitle}>Statistics</Text>
       <View style={styles.statsRow}>
         <View style={styles.statCard}>
-          <Text style={styles.statValue}>{tasks.length}</Text>
-          <Text style={styles.statLabel}>Total</Text>
+          <Text style={[styles.statValue, { color: darkColors.accent }]}>
+            {upcomingCount}
+          </Text>
+          <Text style={styles.statLabel}>Upcoming</Text>
         </View>
         <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: darkColors.accent }]}>
+          <Text style={[styles.statValue, { color: darkColors.success }]}>
             {doneCount}
           </Text>
           <Text style={styles.statLabel}>Done</Text>
         </View>
         <View style={styles.statCard}>
+          <Text
+            style={[
+              styles.statValue,
+              { color: overdueCount > 0 ? darkColors.danger : darkColors.textMuted },
+            ]}
+          >
+            {overdueCount}
+          </Text>
+          <Text style={styles.statLabel}>Overdue</Text>
+        </View>
+        <View style={styles.statCard}>
           <Text style={[styles.statValue, { color: darkColors.success }]}>
             {completionPct}%
           </Text>
-          <Text style={styles.statLabel}>Complete</Text>
+          <Text style={styles.statLabel}>Done %</Text>
         </View>
       </View>
     </View>

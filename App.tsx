@@ -363,7 +363,7 @@ export default function App() {
                       setModalVisible(true);
                     }}
                   >
-                    <Text style={styles.calendarButtonText}>Add to Calendar</Text>
+                    <Text style={styles.calendarButtonText}>Add Task</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -419,7 +419,19 @@ export default function App() {
               </View>
             )}
 
-            {/* Saved tasks */}
+            {/* Saved tasks — or empty state nudge */}
+            {dbReady && tasks.length === 0 && (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateIcon}>🎲</Text>
+                <Text style={styles.emptyStateTitle}>No tasks yet</Text>
+                <Text style={styles.emptyStateBody}>
+                  Generate a time above, then tap{" "}
+                  <Text style={styles.emptyStateHighlight}>Add Task</Text> to
+                  save it with a reminder.
+                </Text>
+              </View>
+            )}
+
             {dbReady && tasks.length > 0 && (
               <TaskList
                 displayedTasks={displayedTasks}
@@ -690,5 +702,32 @@ const styles = StyleSheet.create({
     color: darkColors.textMuted,
     fontSize: 12,
     fontWeight: "600",
+  },
+  emptyState: {
+    marginTop: 40,
+    alignItems: "center",
+    paddingHorizontal: 24,
+    width: "100%",
+    maxWidth: 400,
+  },
+  emptyStateIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: darkColors.textMuted,
+    marginBottom: 8,
+  },
+  emptyStateBody: {
+    fontSize: 14,
+    color: darkColors.textDim,
+    textAlign: "center",
+    lineHeight: 22,
+  },
+  emptyStateHighlight: {
+    color: darkColors.accent,
+    fontWeight: "700",
   },
 });
