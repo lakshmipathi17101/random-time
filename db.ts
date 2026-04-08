@@ -2,6 +2,7 @@ import * as SQLite from "expo-sqlite";
 
 export type TaskCategory = "Work" | "Personal" | "Health" | "Other";
 export type TaskPriority = "High" | "Medium" | "Low";
+export type TaskRecurrence = "none" | "daily" | "weekdays" | "weekly";
 
 export interface Task {
   id: number;
@@ -18,6 +19,7 @@ export interface Task {
   notes: string | null;
   category: TaskCategory | null;
   priority: TaskPriority | null;
+  recurrence: TaskRecurrence;
 }
 
 export type SettingKey =
@@ -29,7 +31,11 @@ export type SettingKey =
   | "max_m"
   | "max_s"
   | "default_reminder"
-  | "theme";
+  | "theme"
+  | "exclude_blocks"
+  | "weighted_random"
+  | "onboarded"
+  | "onboarding_seen";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 
@@ -65,6 +71,7 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
     `ALTER TABLE tasks ADD COLUMN reminder_notification_ids TEXT`,
     `ALTER TABLE tasks ADD COLUMN category TEXT`,
     `ALTER TABLE tasks ADD COLUMN priority TEXT`,
+    `ALTER TABLE tasks ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'none'`,
   ];
   for (const sql of migrations) {
     try {
@@ -78,11 +85,12 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
 }
 
 export async function insertTask(
-  task: Omit<Task, "id" | "created_at" | "status" | "notes" | "reminder_notification_ids" | "category" | "priority"> & {
+  task: Omit<Task, "id" | "created_at" | "status" | "notes" | "reminder_notification_ids" | "category" | "priority" | "recurrence"> & {
     notes?: string | null;
     reminder_notification_ids?: string | null;
     category?: TaskCategory | null;
     priority?: TaskPriority | null;
+    recurrence?: TaskRecurrence;
   }
 ): Promise<number> {
   const db = await getDb();
@@ -90,8 +98,8 @@ export async function insertTask(
     `INSERT INTO tasks
        (title, event_date, reminder_minutes,
         alarm_notification_id, reminder_notification_id,
-        reminder_notification_ids, calendar_event_id, created_at, status, notes, category, priority)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        reminder_notification_ids, calendar_event_id, created_at, status, notes, category, priority, recurrence)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
     task.title,
     task.event_date,
     task.reminder_minutes,
@@ -102,7 +110,8 @@ export async function insertTask(
     new Date().toISOString(),
     task.notes ?? null,
     task.category ?? null,
-    task.priority ?? null
+    task.priority ?? null,
+    task.recurrence ?? "none"
   );
   return result.lastInsertRowId;
 }
@@ -127,6 +136,7 @@ export async function updateTask(
     reminder_notification_ids?: string | null;
     category?: TaskCategory | null;
     priority?: TaskPriority | null;
+    recurrence?: TaskRecurrence;
   }
 ): Promise<void> {
   const db = await getDb();
@@ -134,7 +144,7 @@ export async function updateTask(
     `UPDATE tasks
      SET title = ?, event_date = ?, reminder_minutes = ?, notes = ?,
          alarm_notification_id = ?, reminder_notification_id = ?,
-         reminder_notification_ids = ?, category = ?, priority = ?
+         reminder_notification_ids = ?, category = ?, priority = ?, recurrence = ?
      WHERE id = ?`,
     fields.title,
     fields.event_date,
@@ -145,6 +155,7 @@ export async function updateTask(
     fields.reminder_notification_ids ?? null,
     fields.category ?? null,
     fields.priority ?? null,
+    fields.recurrence ?? "none",
     id
   );
 }
@@ -153,16 +164,37 @@ export async function updateTaskTime(
   id: number,
   event_date: string,
   alarm_notification_id: string | null,
-  reminder_notification_id: string | null
+  reminder_notification_id: string | null,
+  reminder_notification_ids: string | null = null
 ): Promise<void> {
   const db = await getDb();
   await db.runAsync(
     `UPDATE tasks
-     SET event_date = ?, alarm_notification_id = ?, reminder_notification_id = ?, status = 'pending'
+     SET event_date = ?, alarm_notification_id = ?, reminder_notification_id = ?,
+         reminder_notification_ids = ?, status = 'pending'
      WHERE id = ?`,
     event_date,
     alarm_notification_id,
     reminder_notification_id,
+    reminder_notification_ids,
+    id
+  );
+}
+
+export async function updateTaskNotifications(
+  id: number,
+  alarm_notification_id: string | null,
+  reminder_notification_id: string | null,
+  reminder_notification_ids: string | null
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE tasks
+     SET alarm_notification_id = ?, reminder_notification_id = ?, reminder_notification_ids = ?
+     WHERE id = ?`,
+    alarm_notification_id,
+    reminder_notification_id,
+    reminder_notification_ids,
     id
   );
 }

@@ -1,44 +1,46 @@
-export interface AppTheme {
+export type Theme = "dark" | "light";
+
+export interface Colors {
   bg: string;
-  surface: string;
-  surface2: string;
-  surfaceSelected: string;
-  border: string;
-  accent: string;
+  bgCard: string;
+  bgInput: string;
+  bgBorder: string;
   text: string;
   textMuted: string;
   textDim: string;
-  textDim2: string;
+  accent: string;
+  accentDim: string;
   danger: string;
-  historyText: string;
+  success: string;
+  warning: string;
 }
 
-export const DARK: AppTheme = {
+export const darkColors: Colors = {
   bg: "#0f0f1a",
-  surface: "#1a1a2e",
-  surface2: "#2a2a40",
-  surfaceSelected: "#1f1f35",
-  border: "#3a3a55",
-  accent: "#6c63ff",
+  bgCard: "#1a1a2e",
+  bgInput: "#2a2a40",
+  bgBorder: "#3a3a55",
   text: "#ffffff",
   textMuted: "#8888aa",
-  textDim: "#666680",
-  textDim2: "#555570",
+  textDim: "#555570",
+  accent: "#6c63ff",
+  accentDim: "#6c63ff33",
   danger: "#ff6b6b",
-  historyText: "#aaaacc",
+  success: "#4caf50",
+  warning: "#f5a623",
 };
 
-export const LIGHT: AppTheme = {
-  bg: "#f2f2fa",
-  surface: "#ffffff",
-  surface2: "#eef0f8",
-  surfaceSelected: "#f0eeff",
-  border: "#d0d0e4",
-  accent: "#6c63ff",
+export const lightColors: Colors = {
+  bg: "#f0f0fa",
+  bgCard: "#ffffff",
+  bgInput: "#e8e8f8",
+  bgBorder: "#ccccee",
   text: "#1a1a2e",
-  textMuted: "#777799",
+  textMuted: "#555577",
   textDim: "#9999bb",
-  textDim2: "#aaaacc",
-  danger: "#cc2222",
-  historyText: "#555577",
+  accent: "#6c63ff",
+  accentDim: "#6c63ff22",
+  danger: "#d93025",
+  success: "#2e7d32",
+  warning: "#e65100",
 };

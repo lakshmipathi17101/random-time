@@ -16,21 +16,46 @@ async function getDefaultCalendarId(): Promise<string | null> {
     return defaultCal.id;
   }
 
-  // Android: find or create a "RandomTime" calendar
-  const existing = calendars.find((c) => c.title === "RandomTime");
+  // Android: calendars must be tied to a real device account (e.g. Google).
+  // Creating a CalendarType.LOCAL calendar fails silently on many devices
+  // because Android requires an account source. Instead we:
+  //   1. Reuse our own "RandomTime" calendar if it already exists.
+  //   2. Otherwise pick any writable calendar (Google, etc.) already on device.
+  //   3. Last resort: attempt to create a local calendar using the first
+  //      available account source from the device.
+
+  // Step 1 — reuse existing RandomTime calendar
+  const existing = calendars.find(
+    (c) => c.title === "RandomTime" && c.allowsModifications
+  );
   if (existing) return existing.id;
+
+  // Step 2 — use any already-writable calendar on the device
+  const writable = calendars.filter((c) => c.allowsModifications);
+  if (writable.length > 0) {
+    // Prefer a Google / CalDAV synced calendar over a local one
+    const synced = writable.find(
+      (c) =>
+        c.source?.type === Calendar.CalendarType.CALDAV ||
+        c.source?.name?.toLowerCase().includes("google") ||
+        c.source?.name?.toLowerCase().includes("gmail")
+    );
+    return (synced ?? writable[0]).id;
+  }
+
+  // Step 3 — no writable calendar found; try to create a local one using
+  // the first available source so Android has a valid account to attach to.
+  const sources = await Calendar.getSourcesAsync();
+  const source = sources[0];
+  if (!source) return null;
 
   const newCalId = await Calendar.createCalendarAsync({
     title: "RandomTime",
     color: "#6c63ff",
     entityType: Calendar.EntityTypes.EVENT,
-    source: {
-      isLocalAccount: true,
-      name: "RandomTime",
-      type: Calendar.CalendarType.LOCAL,
-    },
+    source,
     name: "RandomTime",
-    ownerAccount: "personal",
+    ownerAccount: source.name,
     accessLevel: Calendar.CalendarAccessLevel.OWNER,
   });
   return newCalId;

@@ -1,7 +1,9 @@
 # Test Plan — RandomTime App
 
-Use this document to manually verify the app after all Phase 4–9 features are implemented.
-Run through each section top to bottom on a **physical Android or iOS device** (not web — notifications and calendar require a real device).
+Run through each section on a **physical Android or iOS device** (not web — notifications and calendar require a real device).
+
+> **Scope as of Phase 5:** Sections 1–7, 9, 10 (partial), 11 (partial), 12 (partial), 13, 14 are testable.
+> Sections marked `[NOT BUILT]` cover unimplemented features — skip these.
 
 ---
 
@@ -119,7 +121,9 @@ Run through each section top to bottom on a **physical Android or iOS device** (
 
 ---
 
-## 8. Recurring Tasks
+## 8. Recurring Tasks `[NOT BUILT]`
+
+> Skipped — recurring task logic not yet implemented (Phase 5 backlog).
 
 | # | Action | Expected Result |
 |---|--------|----------------|
@@ -145,8 +149,8 @@ Run through each section top to bottom on a **physical Android or iOS device** (
 
 | # | Action | Expected Result |
 |---|--------|----------------|
-| 10.1 | Open Settings | Shows: theme, time format, default reminder, sound |
-| 10.2 | Change theme light → dark | Immediately applies app-wide |
+| 10.1 | Open Settings | Shows: time format, default reminder |
+| 10.2 | Change theme light → dark | ~~Immediately applies app-wide~~ `[NOT BUILT]` — theme is hardcoded dark |
 | 10.3 | Change default reminder to 20 min | New tasks default to 20 min |
 | 10.4 | Change time format | Applies everywhere (tasks list, history, result) |
 | 10.5 | Restart app | All settings persist |
@@ -159,8 +163,8 @@ Run through each section top to bottom on a **physical Android or iOS device** (
 |---|--------|----------------|
 | 11.1 | Tap Share on a task | Native share sheet with time + title |
 | 11.2 | Share to Notes app | Pasted correctly formatted |
-| 11.3 | Tap Export | JSON file saved to Files / Downloads |
-| 11.4 | Open exported file | Valid JSON with all tasks |
+| 11.3 | Tap Export | ~~JSON file saved to Files / Downloads~~ `[NOT BUILT]` |
+| 11.4 | Open exported file | ~~Valid JSON with all tasks~~ `[NOT BUILT]` |
 
 ---
 
@@ -170,8 +174,8 @@ Run through each section top to bottom on a **physical Android or iOS device** (
 |---|--------|----------------|
 | 12.1 | Open Statistics screen | Shows total tasks, done count, completion % |
 | 12.2 | After completing 3 tasks | Done count updates |
-| 12.3 | View streaks | Shows days in a row with at least one task completed |
-| 12.4 | Average reminder time | Calculated correctly from task history |
+| 12.3 | View streaks | ~~Shows days in a row with at least one task completed~~ `[NOT BUILT]` |
+| 12.4 | Average reminder time | ~~Calculated correctly from task history~~ `[NOT BUILT]` |
 
 ---
 
