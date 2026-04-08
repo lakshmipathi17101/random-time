@@ -109,12 +109,14 @@ export function useTasks(): UseTasksResult {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            for (const id of selectedIds) {
-              const task = tasks.find((t) => t.id === id);
-              if (!task) continue;
-              await cancelTaskNotifications(task);
-              await deleteTask(id);
-            }
+            await Promise.all(
+              [...selectedIds].map(async (id) => {
+                const task = tasks.find((t) => t.id === id);
+                if (!task) return;
+                await cancelTaskNotifications(task);
+                await deleteTask(id);
+              })
+            );
             setSelectedIds(new Set());
             await loadTasks();
           },

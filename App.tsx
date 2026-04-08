@@ -92,7 +92,7 @@ function AppShell({ settings }: { settings: ReturnType<typeof useSettings> }) {
     if (settings.settingsReady) loadTasks();
   }, [settings.settingsReady, loadTasks]);
 
-  function buildRandomDate(task: Task): Date {
+  const buildRandomDate = useCallback((task: Task): Date => {
     const minTotal = timeToSeconds(
       parseVal(settings.minH, 23), parseVal(settings.minM, 59), parseVal(settings.minS, 59)
     );
@@ -104,7 +104,7 @@ function AppShell({ settings }: { settings: ReturnType<typeof useSettings> }) {
     const { h, m, s } = secondsToTime(randomTotal);
     const orig = new Date(task.event_date);
     return new Date(orig.getFullYear(), orig.getMonth(), orig.getDate(), h, m, s);
-  }
+  }, [settings.minH, settings.minM, settings.minS, settings.maxH, settings.maxM, settings.maxS]);
 
   useEffect(() => {
     const cleanup = setupNotificationResponseHandler(
@@ -121,8 +121,7 @@ function AppShell({ settings }: { settings: ReturnType<typeof useSettings> }) {
       }
     );
     return cleanup;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadTasks, settings.minH, settings.minM, settings.minS, settings.maxH, settings.maxM, settings.maxS]);
+  }, [loadTasks, buildRandomDate]);
 
   const handlePostpone = useCallback(async (task: Task) => {
     const newDate = buildRandomDate(task);
@@ -132,8 +131,7 @@ function AppShell({ settings }: { settings: ReturnType<typeof useSettings> }) {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId, null);
     await loadTasks();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadTasks, settings.minH, settings.minM, settings.minS, settings.maxH, settings.maxM, settings.maxS]);
+  }, [loadTasks, buildRandomDate]);
 
   const handleEditTask = useCallback((task: Task) => {
     setEditingTask(task); setModalVisible(true);
@@ -620,7 +618,7 @@ function makeAppStyles(colors: ReturnType<typeof useTheme>["colors"]) { return S
   historyTime: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#aaaacc",
+    color: colors.textDim,
     letterSpacing: 2,
   },
   historyTimeLatest: {
