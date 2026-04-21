@@ -153,16 +153,18 @@ export async function updateTaskTime(
   id: number,
   event_date: string,
   alarm_notification_id: string | null,
-  reminder_notification_id: string | null
+  reminder_notification_id: string | null,
+  reminder_notification_ids: string | null = null
 ): Promise<void> {
   const db = await getDb();
   await db.runAsync(
     `UPDATE tasks
-     SET event_date = ?, alarm_notification_id = ?, reminder_notification_id = ?, status = 'pending'
+     SET event_date = ?, alarm_notification_id = ?, reminder_notification_id = ?, reminder_notification_ids = ?, status = 'pending'
      WHERE id = ?`,
     event_date,
     alarm_notification_id,
     reminder_notification_id,
+    reminder_notification_ids,
     id
   );
 }
