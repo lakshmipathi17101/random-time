@@ -29,7 +29,10 @@ export type SettingKey =
   | "max_m"
   | "max_s"
   | "default_reminder"
-  | "theme";
+  | "theme"
+  | "work_hours_bias"
+  | "skip_lunch"
+  | "skip_sleep";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 

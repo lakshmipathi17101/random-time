@@ -41,34 +41,34 @@
 
 ---
 
-## Phase 4: Task Enhancements (In Progress)
+## Phase 4: Task Enhancements (Complete)
 > Richer task management and UX
 
-- [ ] Mark task as done (checkbox, visual strike-through, persist status)
-- [ ] Task notes/description (optional multi-line text on each task)
-- [ ] Date picker (create tasks for future dates, not just today)
-- [ ] Postpone task (reschedule to new random time, cancel old notifications)
-- [ ] Edit task (change title, date, time, reminder after saving)
-- [ ] Haptic feedback on generate and key interactions
-- [ ] Multiple reminders per task (e.g. 30 min + 10 min + 5 min before)
-- [ ] Task categories / tags (Work, Personal, Health, etc.)
-- [ ] Task priority (High / Medium / Low with colour indicator)
-- [ ] Search tasks (filter list by title)
-- [ ] Sort tasks (by time, date, priority, creation)
-- [ ] Filter tasks (by status: pending / done; by category; by date)
-- [ ] Bulk delete (select multiple tasks, delete all done / all past)
-- [ ] Multiple times at once (generate 3–5 random times in one tap)
+- [x] Mark task as done (checkbox, visual strike-through, persist status)
+- [x] Task notes/description (optional multi-line text on each task)
+- [x] Date picker (create tasks for future dates, not just today)
+- [x] Postpone task (reschedule to new random time, cancel old notifications)
+- [x] Edit task (change title, date, time, reminder after saving)
+- [x] Haptic feedback on generate and key interactions
+- [x] Multiple reminders per task (e.g. 30 min + 10 min + 5 min before) — wired via `selectedReminders[]` and `reminder_notification_ids` JSON column
+- [x] Task categories / tags (Work, Personal, Health, Other)
+- [x] Task priority (High / Medium / Low with colour indicator)
+- [x] Search tasks (filter list by title)
+- [x] Sort tasks (by time, priority, creation)
+- [x] Filter tasks (by status: pending / done)
+- [x] Bulk delete (select multiple tasks, delete all done)
+- [x] Multiple times at once (×1 / ×3 / ×5 chips, each result individually copyable + addable to calendar)
 
 ---
 
-## Phase 5: Notifications & Alarms Advanced
+## Phase 5: Notifications & Alarms Advanced (Mostly Complete)
 > Power notification and alarm features
 
-- [ ] Notification actions — tap "Done" or "Postpone" from the notification tray
-- [ ] Postpone from notification re-generates a new random time and reschedules
-- [ ] Recurring tasks (daily, weekdays, custom days)
-- [ ] Full-screen alarm UI when event time arrives (requires dev build)
-- [ ] Snooze alarm (delay by N minutes)
+- [x] Notification actions — tap "Done" or "Postpone" from the notification tray
+- [x] Postpone from notification re-generates a new random time and reschedules
+- [ ] Recurring tasks (daily, weekdays, custom days) — moved to Phase 8 (see below)
+- [ ] Full-screen alarm UI when event time arrives (requires dev build) — deferred to Phase 8
+- [ ] Snooze alarm (delay by N minutes) — moved to Phase 8
 - [ ] Sound selection (pick notification/alarm sound)
 - [ ] App icon badge showing count of upcoming tasks
 
@@ -81,26 +81,32 @@
 - [x] Dark/light theme toggle (user-selectable, persisted)
 - [x] Share task (share generated time or task as text / calendar invite)
 - [x] Export tasks as JSON (backup to Files app / Google Drive)
-- [x] Statistics screen (tasks completed, streak 🔥, completion rate, category breakdown)
+- [x] Statistics screen (tasks completed, streak, completion rate, category breakdown)
 
 ---
 
-## Phase 7: Time Generation Advanced
+## Phase 7: Time Generation Advanced (In Progress)
 > More powerful random time options
 
-- [ ] Weighted random (bias toward certain hours, e.g. work hours 9–17)
-- [ ] Exclude time blocks (e.g. skip lunch 12–13, skip sleep 22–07)
-- [ ] Random duration generator (not just a fixed time)
+- [x] **Weighted random + excluded blocks engine** — `weightedRandom.ts` with `generateWeightedRandom`, `WeightedRange`, `ExcludedBlock`, `buildBiasConfig`. 21 unit tests.
+- [x] Built-in bias toggles wired into Generate flow — "Work hours 9–17", "Skip lunch", "Skip sleep" chips, persisted via SQLite settings (`work_hours_bias` / `skip_lunch` / `skip_sleep` keys)
+- [ ] User-configurable weighted ranges (add/remove multiple `[start,end,weight]` entries in a "Smart Range" panel)
+- [ ] User-configurable excluded blocks (add/remove multiple `[start,end]` entries)
+- [ ] Presets — save / load named configs of (range + weights + exclusions)
+- [ ] Random duration generator (not just a fixed time — pick a length between N and M minutes)
 - [ ] Time zone support (generate in a chosen time zone)
 
 ---
 
-## Phase 8: Calendar Intelligence
-> Smarter calendar integration
+## Phase 8: Notifications Advanced + Calendar Intelligence
+> Scheduling power-ups + smart calendar integration
 
+- [ ] Recurring tasks (daily, weekdays, custom days)
+- [ ] Snooze alarm (5 / 10 / 15 min from notification tray)
+- [ ] Calendar conflict detection (avoid overlap with existing events)
+- [ ] Full-screen alarm UI (requires dev build)
 - [ ] Read existing calendar events to avoid conflicts
 - [ ] Recurring calendar events (not just one-off)
-- [ ] Show calendar event acceptance/decline status in task list
 
 ---
 
@@ -108,6 +114,16 @@
 > Platform-specific features and final polish
 
 - [ ] Onboarding screen (brief walkthrough on first launch)
-- [ ] Home screen widget for quick generate (requires Expo config plugin)
+- [ ] Home screen widget for quick generate (Expo config plugin)
 - [ ] iPad / tablet layout
 - [ ] Accessibility (VoiceOver / TalkBack support)
+- [ ] App icon assets (adaptive-icon.png, splash, icon, favicon)
+- [ ] Play Store / App Store listing metadata (`docs/store-metadata.md`)
+- [ ] App icon badge showing count of upcoming tasks
+
+---
+
+## Technical Debt — Deferred
+- Component refactor: extract from monolithic `App.tsx` into `components/`, `hooks/`, `context/` (prototype on `feat/store-ready-sprint`)
+- Web build (`web/` Vite target from the refactor branch) — only if web deployment is desired
+- Remote branch cleanup: 6 duplicate `claude/*` branches (clever-kilby, gifted-hoover, hopeful-gould, pensive-feistel, sad-knuth, serene-nobel) should be deleted on GitHub — they share 0 unique commits with `merge/aibarracks-playstore`

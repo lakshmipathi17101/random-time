@@ -32,6 +32,11 @@ import {
 } from "./db";
 import { cancelNotification, setupNotificationResponseHandler } from "./notificationService";
 import { DARK, LIGHT, AppTheme } from "./theme";
+import {
+  generateWeightedRandom,
+  buildBiasConfig,
+  BiasFlags,
+} from "./weightedRandom";
 
 // ─── Theme context ────────────────────────────────────────────────────────────
 const ThemeContext = createContext<AppTheme>(DARK);
@@ -299,6 +304,9 @@ export default function App() {
   const [dbReady, setDbReady] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [defaultReminder, setDefaultReminder] = useState("10");
+  const [workHoursBias, setWorkHoursBias] = useState(false);
+  const [skipLunch, setSkipLunch] = useState(false);
+  const [skipSleep, setSkipSleep] = useState(false);
 
   const isMountedRef = useRef(false);
 
@@ -321,6 +329,9 @@ export default function App() {
       const savedMaxS = await getSetting("max_s");
       const savedDefaultReminder = await getSetting("default_reminder");
       const savedTheme = await getSetting("theme");
+      const savedWorkBias = await getSetting("work_hours_bias");
+      const savedSkipLunch = await getSetting("skip_lunch");
+      const savedSkipSleep = await getSetting("skip_sleep");
 
       if (saved24h !== null) setIs24h(saved24h === "true");
       if (savedMinH !== null) setMinH(savedMinH);
@@ -331,6 +342,9 @@ export default function App() {
       if (savedMaxS !== null) setMaxS(savedMaxS);
       if (savedDefaultReminder !== null) setDefaultReminder(savedDefaultReminder);
       if (savedTheme !== null) setIsDark(savedTheme === "dark");
+      if (savedWorkBias !== null) setWorkHoursBias(savedWorkBias === "true");
+      if (savedSkipLunch !== null) setSkipLunch(savedSkipLunch === "true");
+      if (savedSkipSleep !== null) setSkipSleep(savedSkipSleep === "true");
 
       await loadTasks();
 
@@ -440,10 +454,17 @@ export default function App() {
     setActiveResultIdx(0);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+    const flags: BiasFlags = { workHoursBias, skipLunch, skipSleep };
+    const { weights, excluded } = buildBiasConfig(flags);
+
     const generated: { h: number; m: number; s: number }[] = [];
     for (let i = 0; i < generateCount; i++) {
-      const randomTotal =
-        Math.floor(Math.random() * (maxTotal - minTotal + 1)) + minTotal;
+      const randomTotal = generateWeightedRandom(
+        minTotal,
+        maxTotal,
+        weights,
+        excluded
+      );
       generated.push(secondsToTime(randomTotal));
     }
     setResults(generated);
@@ -456,6 +477,27 @@ export default function App() {
     };
     setHistory((prev) => [entry, ...prev].slice(0, MAX_HISTORY));
   };
+
+  const toggleWorkHoursBias = useCallback(async () => {
+    const next = !workHoursBias;
+    setWorkHoursBias(next);
+    Haptics.selectionAsync();
+    await upsertSetting("work_hours_bias", next ? "true" : "false");
+  }, [workHoursBias]);
+
+  const toggleSkipLunch = useCallback(async () => {
+    const next = !skipLunch;
+    setSkipLunch(next);
+    Haptics.selectionAsync();
+    await upsertSetting("skip_lunch", next ? "true" : "false");
+  }, [skipLunch]);
+
+  const toggleSkipSleep = useCallback(async () => {
+    const next = !skipSleep;
+    setSkipSleep(next);
+    Haptics.selectionAsync();
+    await upsertSetting("skip_sleep", next ? "true" : "false");
+  }, [skipSleep]);
 
   const copyToClipboard = async (idx: number) => {
     const r = results[idx];
@@ -784,6 +826,41 @@ export default function App() {
               </View>
 
               {error && <Text style={s.error}>{error}</Text>}
+
+              {/* Bias toggles — Phase 7 weighted random + excluded blocks */}
+              <View style={s.biasRow}>
+                <Text style={s.biasLabel}>Bias</Text>
+                <TouchableOpacity
+                  accessibilityRole="switch"
+                  accessibilityState={{ checked: workHoursBias }}
+                  style={[s.biasChip, workHoursBias && s.biasChipActive]}
+                  onPress={toggleWorkHoursBias}
+                >
+                  <Text style={[s.biasChipText, workHoursBias && s.biasChipTextActive]}>
+                    Work hours 9–17
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="switch"
+                  accessibilityState={{ checked: skipLunch }}
+                  style={[s.biasChip, skipLunch && s.biasChipActive]}
+                  onPress={toggleSkipLunch}
+                >
+                  <Text style={[s.biasChipText, skipLunch && s.biasChipTextActive]}>
+                    Skip lunch
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="switch"
+                  accessibilityState={{ checked: skipSleep }}
+                  style={[s.biasChip, skipSleep && s.biasChipActive]}
+                  onPress={toggleSkipSleep}
+                >
+                  <Text style={[s.biasChipText, skipSleep && s.biasChipTextActive]}>
+                    Skip sleep
+                  </Text>
+                </TouchableOpacity>
+              </View>
 
               {/* Count selector + Generate */}
               <View style={s.generateRow}>
@@ -1117,11 +1194,48 @@ function makeStyles(t: AppTheme) {
       textAlign: "center",
     },
 
+    biasRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      alignItems: "center",
+      gap: 8,
+      marginTop: 20,
+      width: "100%",
+      maxWidth: 400,
+    },
+    biasLabel: {
+      color: t.textMuted,
+      fontSize: 13,
+      fontWeight: "700",
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginRight: 4,
+    },
+    biasChip: {
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 999,
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    biasChipActive: {
+      backgroundColor: t.accent + "22",
+      borderColor: t.accent,
+    },
+    biasChipText: {
+      color: t.textMuted,
+      fontSize: 13,
+      fontWeight: "600",
+    },
+    biasChipTextActive: {
+      color: t.accent,
+    },
     generateRow: {
       flexDirection: "row",
       alignItems: "center",
       gap: 8,
-      marginTop: 28,
+      marginTop: 20,
       width: "100%",
       maxWidth: 400,
     },
