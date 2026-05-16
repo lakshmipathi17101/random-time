@@ -149,11 +149,11 @@
 > architecture sketch.
 
 ### 11.0 — Prebuild + scaffold
-- [ ] Commit Phase 7 + Phase 10 work as a clean restore point
-- [ ] `npx expo prebuild --platform android`
+- [x] Commit Phase 7 + Phase 10 + Phase 11-prep work as clean restore points (commits `f4516aa`, `8816cb8`)
+- [x] `npx expo prebuild --platform android` — produced `android/` with Kotlin MainApplication/MainActivity; AndroidManifest already declares `SYSTEM_ALERT_WINDOW` (RN baseline). 161 tests still pass.
+- [x] Strip broken `./assets/*.png` references from `app.json` (Phase 9 deferred-icons work); add `android.package`
 - [ ] Add Gradle product flavors `playStoreLite` / `sideloadFull`
-- [ ] Verify existing app still builds and the 119-test suite still passes
-- [ ] Commit the prebuild snapshot
+- [x] Commit the prebuild snapshot
 
 ### 11.1 — Permission plumbing
 - [ ] `AppControlModule.kt` skeleton: `getPermissionStatus()`,
