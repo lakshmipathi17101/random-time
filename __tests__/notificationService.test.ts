@@ -26,6 +26,7 @@ import {
   scheduleReminder,
   scheduleAlarm,
   cancelNotification,
+  scheduleGentleNudge,
 } from "../notificationService";
 
 // Typed references to the mock functions
@@ -305,5 +306,66 @@ describe("setupNotificationResponseHandler", () => {
     cleanup();
 
     expect(removeMock).toHaveBeenCalledTimes(1);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Phase 10 — object-form handlers + 'reroll' action
+  // ──────────────────────────────────────────────────────────────────────
+  it("accepts the object-form handlers (done/postpone/reroll)", () => {
+    const onDone = jest.fn();
+    const onPostpone = jest.fn();
+    const onReroll = jest.fn();
+    setupNotificationResponseHandler({ onDone, onPostpone, onReroll });
+
+    getRegisteredListener()(makeResponse("reroll", 42));
+    expect(onReroll).toHaveBeenCalledWith(42);
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onPostpone).not.toHaveBeenCalled();
+  });
+
+  it("routes 'reroll' only when onReroll is provided (legacy form ignores it)", () => {
+    const onDone = jest.fn();
+    const onPostpone = jest.fn();
+    // Legacy two-arg form — no onReroll.
+    setupNotificationResponseHandler(onDone, onPostpone);
+
+    getRegisteredListener()(makeResponse("reroll", 9));
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onPostpone).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scheduleGentleNudge (Phase 10)
+// ---------------------------------------------------------------------------
+describe("scheduleGentleNudge", () => {
+  it("returns null when the trigger time is in the past", async () => {
+    const pastEvent = new Date(Date.now() - 60 * 60 * 1000);
+    const result = await scheduleGentleNudge("Meeting", pastEvent, 5);
+    expect(result).toBeNull();
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it("returns a notification ID for a future event", async () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000);
+    const result = await scheduleGentleNudge("Deep work", future, 5);
+    expect(typeof result).toBe("string");
+  });
+
+  it("fires silent (no sound) to avoid being a jump-scare", async () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000);
+    await scheduleGentleNudge("Task", future, 5);
+    const payload = mockSchedule.mock.calls[mockSchedule.mock.calls.length - 1][0];
+    // Explicitly falsy — either `false` or `null`.
+    expect(payload.content.sound).toBeFalsy();
+  });
+
+  it("defaults minutesBefore to 5 when not specified", async () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000);
+    mockSchedule.mockClear();
+    await scheduleGentleNudge("Task", future);
+    const payload = mockSchedule.mock.calls[0][0];
+    // "coming up in 5 minutes" should appear in the body
+    expect(payload.content.body).toContain("5 minutes");
   });
 });

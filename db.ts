@@ -32,7 +32,15 @@ export type SettingKey =
   | "theme"
   | "work_hours_bias"
   | "skip_lunch"
-  | "skip_sleep";
+  | "skip_sleep"
+  /** Phase 10 — ADHD nudger */
+  | "energy_level"
+  | "energy_date"
+  | "pre_nudge_enabled"
+  | "advanced_add_fields"
+  /** Phase 7 — random duration generator */
+  | "duration_min_minutes"
+  | "duration_max_minutes";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 

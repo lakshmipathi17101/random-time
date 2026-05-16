@@ -72,6 +72,10 @@ export default function AddEventModal({
   const [selectedReminders, setSelectedReminders] = useState<number[]>([defaultReminderMin]);
   const [customMinutes, setCustomMinutes] = useState("");
   const [saving, setSaving] = useState(false);
+  // Phase 10 — category + priority + notes live behind an "Advanced" disclosure
+  // in the default capture flow. Open automatically when editing so the user
+  // sees values they've already set.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // Pre-fill fields when editing an existing task
   useEffect(() => {
@@ -85,6 +89,14 @@ export default function AddEventModal({
       setCustomMinutes("");
       setCategory(editTask.category ?? null);
       setPriority(editTask.priority ?? null);
+      // If an existing task already has a category / priority / notes, open
+      // the advanced panel so the user can see them.
+      const hasAdvanced = Boolean(
+        editTask.category || editTask.priority || editTask.notes
+      );
+      setAdvancedOpen(hasAdvanced);
+    } else if (visible && !editTask) {
+      setAdvancedOpen(false);
     }
   }, [visible, editTask]);
 
@@ -288,49 +300,68 @@ export default function AddEventModal({
             />
           )}
 
-          {/* Notes */}
-          <Text style={s.label}>Notes (optional)</Text>
-          <TextInput
-            style={[s.textInput, s.textInputMultiline]}
-            placeholder="Add a note…"
-            placeholderTextColor={theme.textDim}
-            value={notes}
-            onChangeText={setNotes}
-            multiline
-            numberOfLines={3}
-          />
+          {/* Phase 10 — Advanced disclosure (Notes, Category, Priority).
+              These fields live here to keep the default capture flow friction-free.
+              Auto-expanded when editing a task that already has any of them set. */}
+          <TouchableOpacity
+            style={s.advancedToggle}
+            onPress={() => setAdvancedOpen((v) => !v)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: advancedOpen }}
+            accessibilityLabel="Toggle advanced fields"
+          >
+            <Text style={s.advancedToggleText}>
+              {advancedOpen ? "▲ Advanced" : "▼ Advanced (notes, category, priority)"}
+            </Text>
+          </TouchableOpacity>
 
-          {/* Category */}
-          <Text style={s.label}>Category</Text>
-          <View style={s.chipRow}>
-            {CATEGORY_OPTIONS.map((cat) => (
-              <TouchableOpacity
-                key={cat}
-                style={[s.chip, category === cat && s.chipActive]}
-                onPress={() => setCategory(category === cat ? null : cat)}
-              >
-                <Text style={[s.chipText, category === cat && s.chipTextActive]}>{cat}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          {advancedOpen && (
+            <>
+              {/* Notes */}
+              <Text style={s.label}>Notes (optional)</Text>
+              <TextInput
+                style={[s.textInput, s.textInputMultiline]}
+                placeholder="Add a note…"
+                placeholderTextColor={theme.textDim}
+                value={notes}
+                onChangeText={setNotes}
+                multiline
+                numberOfLines={3}
+              />
 
-          {/* Priority */}
-          <Text style={s.label}>Priority</Text>
-          <View style={s.chipRow}>
-            {PRIORITY_OPTIONS.map((p) => {
-              const color = p === "High" ? "#ff6b6b" : p === "Medium" ? "#f5a623" : "#4caf50";
-              const active = priority === p;
-              return (
-                <TouchableOpacity
-                  key={p}
-                  style={[s.chip, active && { backgroundColor: color, borderColor: color }]}
-                  onPress={() => setPriority(priority === p ? null : p)}
-                >
-                  <Text style={[s.chipText, active && s.chipTextActive]}>{p}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+              {/* Category */}
+              <Text style={s.label}>Category</Text>
+              <View style={s.chipRow}>
+                {CATEGORY_OPTIONS.map((cat) => (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[s.chip, category === cat && s.chipActive]}
+                    onPress={() => setCategory(category === cat ? null : cat)}
+                  >
+                    <Text style={[s.chipText, category === cat && s.chipTextActive]}>{cat}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Priority */}
+              <Text style={s.label}>Priority</Text>
+              <View style={s.chipRow}>
+                {PRIORITY_OPTIONS.map((p) => {
+                  const color = p === "High" ? "#ff6b6b" : p === "Medium" ? "#f5a623" : "#4caf50";
+                  const active = priority === p;
+                  return (
+                    <TouchableOpacity
+                      key={p}
+                      style={[s.chip, active && { backgroundColor: color, borderColor: color }]}
+                      onPress={() => setPriority(priority === p ? null : p)}
+                    >
+                      <Text style={[s.chipText, active && s.chipTextActive]}>{p}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </>
+          )}
 
           {/* Reminder Chips (multi-select) */}
           <Text style={s.label}>Remind me before</Text>
@@ -486,6 +517,19 @@ function makeStyles(t: AppTheme) {
     },
     chipTextActive: {
       color: "#ffffff",
+    },
+    // Phase 10 — Advanced disclosure
+    advancedToggle: {
+      marginTop: 16,
+      marginBottom: 4,
+      paddingVertical: 8,
+      alignItems: "center",
+    },
+    advancedToggleText: {
+      color: t.textMuted,
+      fontSize: 13,
+      fontWeight: "600",
+      letterSpacing: 0.5,
     },
     buttonRow: {
       flexDirection: "row",

@@ -19,6 +19,15 @@ export async function requestNotificationPermission(): Promise<boolean> {
   if (status !== "granted") return false;
 
   if (Platform.OS === "android") {
+    // Gentle pre-nudge tier (Phase 10) — a silent heads-up a few minutes
+    // before the main reminder. Importance DEFAULT so it doesn't
+    // interrupt; just a banner / badge.
+    await Notifications.setNotificationChannelAsync("pre_reminders", {
+      name: "Gentle Pre-Nudge",
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: null,
+      enableVibrate: false,
+    });
     await Notifications.setNotificationChannelAsync("reminders", {
       name: "Task Reminders",
       importance: Notifications.AndroidImportance.HIGH,
@@ -33,11 +42,18 @@ export async function requestNotificationPermission(): Promise<boolean> {
     });
   }
 
-  // Register action category for alarm notifications
+  // Register action category for alarm notifications.
+  // Phase 10: added "reroll" — semantically distinct from "postpone" in the
+  // UI (reroll uses the smart weighted engine; postpone uses uniform random).
   await Notifications.setNotificationCategoryAsync("task_alarm", [
     {
       identifier: "done",
       buttonTitle: "Done",
+      options: { isDestructive: false, isAuthenticationRequired: false },
+    },
+    {
+      identifier: "reroll",
+      buttonTitle: "Re-roll",
       options: { isDestructive: false, isAuthenticationRequired: false },
     },
     {
@@ -50,17 +66,32 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return true;
 }
 
+export interface NotificationResponseHandlers {
+  onDone: (taskId: number) => void;
+  onPostpone: (taskId: number) => void;
+  /** Phase 10 — smart re-schedule via weighted engine. Optional for b/c. */
+  onReroll?: (taskId: number) => void;
+}
+
 export function setupNotificationResponseHandler(
-  onDone: (taskId: number) => void,
-  onPostpone: (taskId: number) => void
+  handlersOrOnDone: NotificationResponseHandlers | ((taskId: number) => void),
+  onPostponeLegacy?: (taskId: number) => void
 ): () => void {
+  // Accept either the new object form or the legacy two-arg form so existing
+  // call sites keep working.
+  const handlers: NotificationResponseHandlers =
+    typeof handlersOrOnDone === "function"
+      ? { onDone: handlersOrOnDone, onPostpone: onPostponeLegacy ?? (() => {}) }
+      : handlersOrOnDone;
+
   const subscription = Notifications.addNotificationResponseReceivedListener(
     (response) => {
       const actionId = response.actionIdentifier;
       const taskId = response.notification.request.content.data?.taskId as number | undefined;
       if (taskId == null) return;
-      if (actionId === "done") onDone(taskId);
-      else if (actionId === "postpone") onPostpone(taskId);
+      if (actionId === "done") handlers.onDone(taskId);
+      else if (actionId === "postpone") handlers.onPostpone(taskId);
+      else if (actionId === "reroll" && handlers.onReroll) handlers.onReroll(taskId);
     }
   );
   return () => subscription.remove();
@@ -116,6 +147,42 @@ export async function scheduleAlarm(
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.DATE,
       date: eventDate,
+    },
+  });
+
+  return id;
+}
+
+/**
+ * Phase 10 — Gentle pre-nudge.
+ * Fires a silent banner a few minutes before the main alarm so the alarm
+ * itself isn't a jump-scare. Uses the lower-importance "pre_reminders"
+ * Android channel and no sound.
+ */
+export async function scheduleGentleNudge(
+  title: string,
+  eventDate: Date,
+  minutesBefore: number = 5
+): Promise<string | null> {
+  const triggerDate = new Date(
+    eventDate.getTime() - minutesBefore * 60 * 1000
+  );
+
+  if (triggerDate <= new Date()) {
+    return null;
+  }
+
+  const id = await Notifications.scheduleNotificationAsync({
+    content: {
+      title: "Heads up",
+      body: `"${title}" coming up in ${minutesBefore} minutes.`,
+      // `false` = silent on iOS/Android; matches the pre_reminders channel config.
+      sound: false,
+      ...(Platform.OS === "android" && { channelId: "pre_reminders" }),
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: triggerDate,
     },
   });
 

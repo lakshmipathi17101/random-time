@@ -30,13 +30,30 @@ import {
   TaskPriority,
   TaskCategory,
 } from "./db";
-import { cancelNotification, setupNotificationResponseHandler } from "./notificationService";
+import {
+  cancelNotification,
+  setupNotificationResponseHandler,
+  scheduleReminder,
+  scheduleAlarm,
+  scheduleGentleNudge,
+} from "./notificationService";
 import { DARK, LIGHT, AppTheme } from "./theme";
 import {
   generateWeightedRandom,
   buildBiasConfig,
   BiasFlags,
 } from "./weightedRandom";
+import { calcStreakWithGrace } from "./utils/streak";
+import {
+  planSurpriseMe,
+  nudgeCountForEnergy,
+  type EnergyLevel,
+} from "./utils/scheduler";
+import {
+  generateRandomDuration,
+  formatDuration,
+  validateDurationBounds,
+} from "./utils/duration";
 
 // ─── Theme context ────────────────────────────────────────────────────────────
 const ThemeContext = createContext<AppTheme>(DARK);
@@ -76,7 +93,12 @@ function formatTime12(h: number, m: number, s: number): string {
   return `${pad(h12)}:${pad(m)}:${pad(s)} ${period}`;
 }
 
-function calcStreak(tasks: Task[]): number {
+/**
+ * Phase 10 — streak with a one-grace-per-7-days forgiveness rule.
+ * Delegates to utils/streak.ts; returns both the count and whether a grace
+ * was consumed so the UI can show a "streak saved" note.
+ */
+function computeStreak(tasks: Task[]): { streak: number; graceUsed: boolean } {
   const doneDates = new Set(
     tasks
       .filter((t) => t.status === "done")
@@ -85,18 +107,7 @@ function calcStreak(tasks: Task[]): number {
         return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       })
   );
-  let streak = 0;
-  const check = new Date();
-  for (;;) {
-    const key = `${check.getFullYear()}-${check.getMonth()}-${check.getDate()}`;
-    if (doneDates.has(key)) {
-      streak++;
-      check.setDate(check.getDate() - 1);
-    } else {
-      break;
-    }
-  }
-  return streak;
+  return calcStreakWithGrace(doneDates);
 }
 
 // ─── TimeInput ────────────────────────────────────────────────────────────────
@@ -174,6 +185,20 @@ interface HistoryEntry {
   h: number;
   m: number;
   s: number;
+}
+
+/**
+ * Phase 10 — human-readable countdown for the Next Nudge card.
+ * < 1 min → "30 sec"; < 1 hr → "14 min"; otherwise "2h 14m".
+ */
+function formatCountdown(seconds: number): string {
+  if (seconds <= 0) return "now";
+  if (seconds < 60) return `${seconds} sec`;
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  const remM = mins % 60;
+  return `${hrs}h ${remM}m`;
 }
 
 function priorityColor(p: TaskPriority): string {
@@ -308,7 +333,27 @@ export default function App() {
   const [skipLunch, setSkipLunch] = useState(false);
   const [skipSleep, setSkipSleep] = useState(false);
 
+  // Phase 10 — ADHD nudger state
+  const [energyLevel, setEnergyLevelState] = useState<EnergyLevel | null>(null);
+  const [energyPromptDismissed, setEnergyPromptDismissed] = useState(false);
+  const [preNudgeEnabled, setPreNudgeEnabled] = useState(true);
+  const [nowTick, setNowTick] = useState<number>(Date.now());
+
+  // Phase 7 — Random duration generator state
+  const [durationOpen, setDurationOpen] = useState(false);
+  const [durationMin, setDurationMin] = useState("15");
+  const [durationMax, setDurationMax] = useState("60");
+  const [durationResult, setDurationResult] = useState<number | null>(null);
+  const [durationError, setDurationError] = useState<string | null>(null);
+  const [durationCopied, setDurationCopied] = useState(false);
+
   const isMountedRef = useRef(false);
+
+  // Tick every second so the Next Nudge countdown stays fresh.
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const loadTasks = useCallback(async () => {
     const fetched = await getTasks();
@@ -332,6 +377,13 @@ export default function App() {
       const savedWorkBias = await getSetting("work_hours_bias");
       const savedSkipLunch = await getSetting("skip_lunch");
       const savedSkipSleep = await getSetting("skip_sleep");
+      // Phase 10
+      const savedEnergy = await getSetting("energy_level");
+      const savedEnergyDate = await getSetting("energy_date");
+      const savedPreNudge = await getSetting("pre_nudge_enabled");
+      // Phase 7 — random duration
+      const savedDurationMin = await getSetting("duration_min_minutes");
+      const savedDurationMax = await getSetting("duration_max_minutes");
 
       if (saved24h !== null) setIs24h(saved24h === "true");
       if (savedMinH !== null) setMinH(savedMinH);
@@ -345,6 +397,15 @@ export default function App() {
       if (savedWorkBias !== null) setWorkHoursBias(savedWorkBias === "true");
       if (savedSkipLunch !== null) setSkipLunch(savedSkipLunch === "true");
       if (savedSkipSleep !== null) setSkipSleep(savedSkipSleep === "true");
+      if (savedPreNudge !== null) setPreNudgeEnabled(savedPreNudge === "true");
+      if (savedDurationMin !== null) setDurationMin(savedDurationMin);
+      if (savedDurationMax !== null) setDurationMax(savedDurationMax);
+
+      // Energy level: only carry over if it was set today; otherwise prompt.
+      const todayKey = new Date().toISOString().slice(0, 10);
+      if (savedEnergyDate === todayKey && savedEnergy) {
+        setEnergyLevelState(savedEnergy as EnergyLevel);
+      }
 
       await loadTasks();
 
@@ -355,38 +416,72 @@ export default function App() {
     init();
   }, [loadTasks]);
 
-  // Notification action handlers (Done / Postpone from tray)
+  // Notification action handlers (Done / Postpone / Re-roll from tray)
   useEffect(() => {
-    const cleanup = setupNotificationResponseHandler(
-      async (taskId) => {
+    const minTotalFn = () =>
+      timeToSeconds(parseVal(minH, 23), parseVal(minM, 59), parseVal(minS, 59));
+    const maxTotalFn = () =>
+      timeToSeconds(parseVal(maxH, 23), parseVal(maxM, 59), parseVal(maxS, 59));
+
+    const rescheduleTask = async (taskId: number, useWeighted: boolean) => {
+      const task = (await getTasks()).find((t) => t.id === taskId);
+      if (!task) return;
+      const minTotal = minTotalFn();
+      const maxTotal = maxTotalFn();
+
+      let randomTotal: number;
+      if (useWeighted) {
+        const { weights, excluded } = buildBiasConfig({
+          workHoursBias,
+          skipLunch,
+          skipSleep,
+        });
+        randomTotal = generateWeightedRandom(minTotal, maxTotal, weights, excluded);
+      } else {
+        const range = Math.max(maxTotal - minTotal, 0);
+        randomTotal = Math.floor(Math.random() * (range + 1)) + minTotal;
+      }
+
+      const { h, m, s } = secondsToTime(randomTotal);
+      const orig = new Date(task.event_date);
+      const newDate = new Date(orig.getFullYear(), orig.getMonth(), orig.getDate(), h, m, s);
+
+      if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
+      if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
+      if (task.reminder_notification_ids) {
+        const ids: string[] = JSON.parse(task.reminder_notification_ids);
+        for (const id of ids) await cancelNotification(id);
+      }
+
+      const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
+      const alarmId = await scheduleAlarm(task.title, newDate, task.id);
+      // Pre-nudge if enabled and the new alarm is far enough out.
+      if (preNudgeEnabled) {
+        await scheduleGentleNudge(task.title, newDate, 5);
+      }
+      await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
+      await loadTasks();
+    };
+
+    const cleanup = setupNotificationResponseHandler({
+      onDone: async (taskId) => {
         await updateTaskStatus(taskId, "done");
         await loadTasks();
       },
-      async (taskId) => {
-        const task = (await getTasks()).find((t) => t.id === taskId);
-        if (!task) return;
-        const minTotal = timeToSeconds(
-          parseVal(minH, 23), parseVal(minM, 59), parseVal(minS, 59)
-        );
-        const maxTotal = timeToSeconds(
-          parseVal(maxH, 23), parseVal(maxM, 59), parseVal(maxS, 59)
-        );
-        const range = Math.max(maxTotal - minTotal, 0);
-        const randomTotal = Math.floor(Math.random() * (range + 1)) + minTotal;
-        const { h, m, s } = secondsToTime(randomTotal);
-        const orig = new Date(task.event_date);
-        const newDate = new Date(orig.getFullYear(), orig.getMonth(), orig.getDate(), h, m, s);
-        if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
-        if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
-        const { scheduleReminder, scheduleAlarm } = await import("./notificationService");
-        const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
-        const alarmId = await scheduleAlarm(task.title, newDate, task.id);
-        await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
-        await loadTasks();
-      }
-    );
+      onPostpone: (taskId) => {
+        void rescheduleTask(taskId, false);
+      },
+      onReroll: (taskId) => {
+        void rescheduleTask(taskId, true);
+      },
+    });
     return cleanup;
-  }, [loadTasks, minH, minM, minS, maxH, maxM, maxS]);
+  }, [
+    loadTasks,
+    minH, minM, minS, maxH, maxM, maxS,
+    workHoursBias, skipLunch, skipSleep,
+    preNudgeEnabled,
+  ]);
 
   // Persist settings
   useEffect(() => {
@@ -499,6 +594,59 @@ export default function App() {
     await upsertSetting("skip_sleep", next ? "true" : "false");
   }, [skipSleep]);
 
+  // Phase 10 — energy level persistence
+  const setEnergyLevel = useCallback(async (level: EnergyLevel) => {
+    setEnergyLevelState(level);
+    Haptics.selectionAsync();
+    const todayKey = new Date().toISOString().slice(0, 10);
+    await upsertSetting("energy_level", level);
+    await upsertSetting("energy_date", todayKey);
+  }, []);
+
+  const dismissEnergyPrompt = useCallback(() => {
+    setEnergyPromptDismissed(true);
+  }, []);
+
+  const togglePreNudge = useCallback(async () => {
+    const next = !preNudgeEnabled;
+    setPreNudgeEnabled(next);
+    Haptics.selectionAsync();
+    await upsertSetting("pre_nudge_enabled", next ? "true" : "false");
+  }, [preNudgeEnabled]);
+
+  // ─── Phase 7 — Random duration generator ─────────────────────────────────
+  const toggleDurationOpen = useCallback(() => {
+    setDurationOpen((v) => !v);
+    Haptics.selectionAsync();
+  }, []);
+
+  const generateDuration = useCallback(async () => {
+    const minN = parseInt(durationMin, 10);
+    const maxN = parseInt(durationMax, 10);
+    const err = validateDurationBounds({ minMinutes: minN, maxMinutes: maxN });
+    if (err) {
+      setDurationError(err);
+      setDurationResult(null);
+      return;
+    }
+    setDurationError(null);
+    setDurationCopied(false);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const value = generateRandomDuration(minN, maxN);
+    setDurationResult(value);
+    // Persist the bounds the user actually generated against (not on every keystroke).
+    await upsertSetting("duration_min_minutes", String(minN));
+    await upsertSetting("duration_max_minutes", String(maxN));
+  }, [durationMin, durationMax]);
+
+  const copyDuration = useCallback(async () => {
+    if (durationResult == null) return;
+    await Clipboard.setStringAsync(formatDuration(durationResult));
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setDurationCopied(true);
+    setTimeout(() => setDurationCopied(false), 2000);
+  }, [durationResult]);
+
   const copyToClipboard = async (idx: number) => {
     const r = results[idx];
     if (!r) return;
@@ -542,7 +690,31 @@ export default function App() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [tasks]);
 
-  const streak = useMemo(() => calcStreak(tasks), [tasks]);
+  const streakInfo = useMemo(() => computeStreak(tasks), [tasks]);
+  const streak = streakInfo.streak;
+
+  /**
+   * Phase 10 — Next Nudge.
+   * Earliest pending task whose event_date is in the future, plus the
+   * seconds-until-fire (recomputed via the nowTick interval above).
+   */
+  const nextNudge = useMemo(() => {
+    const now = nowTick;
+    const upcoming = tasks
+      .filter((t) => t.status === "pending")
+      .map((t) => ({ task: t, ts: new Date(t.event_date).getTime() }))
+      .filter((e) => e.ts > now)
+      .sort((a, b) => a.ts - b.ts);
+    if (upcoming.length === 0) return null;
+    const first = upcoming[0];
+    return {
+      task: first.task,
+      secondsUntil: Math.floor((first.ts - now) / 1000),
+    };
+  }, [tasks, nowTick]);
+
+  /** Should the energy prompt card be shown? Once per day, unless dismissed. */
+  const showEnergyPrompt = energyLevel === null && !energyPromptDismissed;
 
   const handleLongPress = useCallback((task: Task) => {
     setSelectedIds((prev) => {
@@ -674,25 +846,124 @@ export default function App() {
         for (const id of ids) await cancelNotification(id);
       }
 
-      const { scheduleReminder, scheduleAlarm } = await import("./notificationService");
       const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
       const alarmId = await scheduleAlarm(task.title, newDate);
+      if (preNudgeEnabled) await scheduleGentleNudge(task.title, newDate, 5);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
       await loadTasks();
     },
-    [minH, minM, minS, maxH, maxM, maxS, loadTasks]
+    [minH, minM, minS, maxH, maxM, maxS, loadTasks, preNudgeEnabled]
   );
+
+  /**
+   * Phase 10 — Surprise Me.
+   * Pick N pending tasks (N scales with energy level) and scatter them across
+   * today using the weighted engine + current bias settings. Reschedules
+   * their notifications.
+   */
+  const handleSurpriseMe = useCallback(async () => {
+    const pending = tasks.filter((t) => t.status === "pending");
+    if (pending.length === 0) {
+      Alert.alert("Nothing to surprise-me with", "Add some pending tasks first.");
+      return;
+    }
+
+    const minTotal = timeToSeconds(
+      parseVal(minH, 23), parseVal(minM, 59), parseVal(minS, 59)
+    );
+    const maxTotal = timeToSeconds(
+      parseVal(maxH, 23), parseVal(maxM, 59), parseVal(maxS, 59)
+    );
+    if (minTotal > maxTotal) {
+      Alert.alert("Invalid range", "Min time must be ≤ max time.");
+      return;
+    }
+
+    const { weights, excluded } = buildBiasConfig({
+      workHoursBias,
+      skipLunch,
+      skipSleep,
+    });
+
+    const plan = planSurpriseMe({
+      pendingTasks: pending.map((t) => ({ id: t.id, event_date: t.event_date })),
+      count: nudgeCountForEnergy(energyLevel),
+      today: new Date(),
+      minSeconds: minTotal,
+      maxSeconds: maxTotal,
+      weights,
+      excluded,
+    });
+
+    if (plan.length === 0) {
+      Alert.alert("Surprise Me", "Nothing to reschedule right now.");
+      return;
+    }
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    for (const item of plan) {
+      const task = pending.find((t) => t.id === item.taskId);
+      if (!task) continue;
+      const newDate = new Date(item.newEventDateIso);
+
+      if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
+      if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
+      if (task.reminder_notification_ids) {
+        const ids: string[] = JSON.parse(task.reminder_notification_ids);
+        for (const id of ids) await cancelNotification(id);
+      }
+
+      const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
+      const alarmId = await scheduleAlarm(task.title, newDate, task.id);
+      if (preNudgeEnabled) await scheduleGentleNudge(task.title, newDate, 5);
+
+      await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
+    }
+
+    await loadTasks();
+    Alert.alert(
+      "Surprised you",
+      `${plan.length} task${plan.length === 1 ? "" : "s"} scattered across today.`
+    );
+  }, [
+    tasks,
+    minH, minM, minS, maxH, maxM, maxS,
+    workHoursBias, skipLunch, skipSleep,
+    energyLevel, preNudgeEnabled,
+    loadTasks,
+  ]);
 
   const handleToggleDone = useCallback(
     async (task: Task) => {
       const newStatus = task.status === "done" ? "pending" : "done";
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      // Phase 10 — celebration haptic pattern when MARKING DONE.
+      // Unmarking (done → pending) stays quiet.
+      if (newStatus === "done") {
+        // Always fire a success pulse. For longer streaks, stack a second
+        // pulse shortly after for a "double-tap" feel.
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        if (streak >= 3) {
+          setTimeout(() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          }, 140);
+        }
+        if (streak >= 7) {
+          setTimeout(() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          }, 280);
+        }
+      } else {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+
       await updateTaskStatus(task.id, newStatus);
       await loadTasks();
     },
-    [loadTasks]
+    [loadTasks, streak]
   );
 
   const handleDeleteTask = useCallback(
@@ -740,6 +1011,70 @@ export default function App() {
             >
               <Text style={s.title}>Random Time</Text>
               <Text style={s.subtitle}>Generator</Text>
+
+              {/* Phase 10 — Next Nudge card */}
+              {dbReady && nextNudge && (
+                <View
+                  style={s.nextNudgeCard}
+                  accessibilityRole="summary"
+                  accessibilityLabel={`Next nudge: ${nextNudge.task.title} in ${formatCountdown(
+                    nextNudge.secondsUntil
+                  )}`}
+                >
+                  <Text style={s.nextNudgeLabel}>NEXT NUDGE</Text>
+                  <Text style={s.nextNudgeTitle} numberOfLines={1}>
+                    {nextNudge.task.title}
+                  </Text>
+                  <Text style={s.nextNudgeCountdown}>
+                    in {formatCountdown(nextNudge.secondsUntil)}
+                  </Text>
+                </View>
+              )}
+
+              {/* Phase 10 — Energy check-in (once/day) */}
+              {dbReady && showEnergyPrompt && (
+                <View style={s.energyCard}>
+                  <View style={s.energyHeaderRow}>
+                    <Text style={s.energyTitle}>How's your energy today?</Text>
+                    <TouchableOpacity
+                      onPress={dismissEnergyPrompt}
+                      accessibilityLabel="Dismiss energy prompt"
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={s.energyDismiss}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={s.energyRow}>
+                    {(["low", "medium", "high"] as const).map((lvl) => (
+                      <TouchableOpacity
+                        key={lvl}
+                        style={s.energyChip}
+                        onPress={() => setEnergyLevel(lvl)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Set energy level to ${lvl}`}
+                      >
+                        <Text style={s.energyChipText}>
+                          {lvl === "low" ? "😴 Low" : lvl === "medium" ? "🙂 Medium" : "⚡ High"}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Phase 10 — Surprise Me (only shown if there are pending tasks) */}
+              {dbReady && tasks.some((t) => t.status === "pending") && (
+                <TouchableOpacity
+                  style={s.surpriseMeButton}
+                  onPress={handleSurpriseMe}
+                  accessibilityRole="button"
+                  accessibilityLabel="Surprise me — scatter some pending tasks across today"
+                >
+                  <Text style={s.surpriseMeText}>
+                    🎲 Surprise Me ({nudgeCountForEnergy(energyLevel)})
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               {/* Settings Panel */}
               <TouchableOpacity
@@ -944,6 +1279,87 @@ export default function App() {
                   />
                 </View>
               )}
+
+              {/* Phase 7 — Random Duration generator */}
+              <View style={s.durationCard}>
+                <TouchableOpacity
+                  style={s.durationHeader}
+                  onPress={toggleDurationOpen}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: durationOpen }}
+                >
+                  <Text style={s.durationTitle}>Random duration</Text>
+                  <Text style={s.durationToggle}>
+                    {durationOpen ? "Hide ▴" : "Show ▾"}
+                  </Text>
+                </TouchableOpacity>
+
+                {durationOpen && (
+                  <>
+                    <Text style={s.durationHint}>
+                      Pick a random length between two bounds — useful for
+                      time-boxing.
+                    </Text>
+
+                    <View style={s.durationInputRow}>
+                      <View style={s.durationInputCol}>
+                        <Text style={s.durationInputLabel}>Min (min)</Text>
+                        <TextInput
+                          style={s.durationInput}
+                          keyboardType="number-pad"
+                          value={durationMin}
+                          onChangeText={setDurationMin}
+                          placeholder="15"
+                          placeholderTextColor={theme.textDim}
+                        />
+                      </View>
+                      <View style={s.durationInputCol}>
+                        <Text style={s.durationInputLabel}>Max (min)</Text>
+                        <TextInput
+                          style={s.durationInput}
+                          keyboardType="number-pad"
+                          value={durationMax}
+                          onChangeText={setDurationMax}
+                          placeholder="60"
+                          placeholderTextColor={theme.textDim}
+                        />
+                      </View>
+                    </View>
+
+                    {durationError && (
+                      <Text style={s.error}>{durationError}</Text>
+                    )}
+
+                    <TouchableOpacity
+                      style={s.button}
+                      onPress={generateDuration}
+                    >
+                      <Text style={s.buttonText}>Generate Duration</Text>
+                    </TouchableOpacity>
+
+                    {durationResult != null && (
+                      <View style={s.durationResultContainer}>
+                        <Text style={s.durationResultLabel}>
+                          Your random duration
+                        </Text>
+                        <Text style={s.durationResult}>
+                          {formatDuration(durationResult)}
+                        </Text>
+                        <View style={s.actionRow}>
+                          <TouchableOpacity
+                            style={s.copyButton}
+                            onPress={copyDuration}
+                          >
+                            <Text style={s.copyButtonText}>
+                              {durationCopied ? "Copied!" : "Copy"}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+                  </>
+                )}
+              </View>
 
               {/* Saved Tasks */}
               {dbReady && tasks.length > 0 && (
@@ -1229,6 +1645,167 @@ function makeStyles(t: AppTheme) {
       fontWeight: "600",
     },
     biasChipTextActive: {
+      color: t.accent,
+    },
+    // Phase 7 — Random Duration panel
+    durationCard: {
+      width: "100%",
+      maxWidth: 400,
+      backgroundColor: t.surface,
+      borderRadius: 16,
+      paddingVertical: 14,
+      paddingHorizontal: 18,
+      marginBottom: 16,
+    },
+    durationHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+    },
+    durationTitle: {
+      color: t.text,
+      fontSize: 16,
+      fontWeight: "600",
+    },
+    durationToggle: {
+      color: t.accent,
+      fontSize: 13,
+      fontWeight: "600",
+    },
+    durationHint: {
+      color: t.textDim,
+      fontSize: 13,
+      marginTop: 8,
+      marginBottom: 12,
+    },
+    durationInputRow: {
+      flexDirection: "row",
+      gap: 12,
+      marginBottom: 12,
+    },
+    durationInputCol: {
+      flex: 1,
+    },
+    durationInputLabel: {
+      color: t.textDim,
+      fontSize: 12,
+      marginBottom: 4,
+    },
+    durationInput: {
+      backgroundColor: t.bg,
+      color: t.text,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    durationResultContainer: {
+      marginTop: 14,
+      alignItems: "center",
+    },
+    durationResultLabel: {
+      color: t.textDim,
+      fontSize: 12,
+      marginBottom: 4,
+    },
+    durationResult: {
+      color: t.accent,
+      fontSize: 36,
+      fontWeight: "700",
+      marginBottom: 10,
+    },
+    // Phase 10 — Next Nudge card, Energy prompt, Surprise Me
+    nextNudgeCard: {
+      width: "100%",
+      maxWidth: 400,
+      backgroundColor: t.surface,
+      borderRadius: 16,
+      paddingVertical: 14,
+      paddingHorizontal: 18,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: t.accent + "55",
+    },
+    nextNudgeLabel: {
+      fontSize: 11,
+      fontWeight: "700",
+      color: t.accent,
+      letterSpacing: 1.4,
+      marginBottom: 4,
+    },
+    nextNudgeTitle: {
+      fontSize: 18,
+      fontWeight: "700",
+      color: t.text,
+    },
+    nextNudgeCountdown: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: t.textMuted,
+      marginTop: 2,
+    },
+    energyCard: {
+      width: "100%",
+      maxWidth: 400,
+      backgroundColor: t.surface,
+      borderRadius: 16,
+      paddingVertical: 14,
+      paddingHorizontal: 18,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    energyHeaderRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 10,
+    },
+    energyTitle: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: t.text,
+      flex: 1,
+    },
+    energyDismiss: {
+      fontSize: 16,
+      color: t.textDim,
+      paddingHorizontal: 4,
+    },
+    energyRow: {
+      flexDirection: "row",
+      gap: 8,
+    },
+    energyChip: {
+      flex: 1,
+      paddingVertical: 10,
+      borderRadius: 12,
+      backgroundColor: t.surface2,
+      borderWidth: 1,
+      borderColor: t.border,
+      alignItems: "center",
+    },
+    energyChipText: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: t.text,
+    },
+    surpriseMeButton: {
+      width: "100%",
+      maxWidth: 400,
+      backgroundColor: t.accent + "18",
+      borderRadius: 14,
+      paddingVertical: 12,
+      alignItems: "center",
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: t.accent + "44",
+    },
+    surpriseMeText: {
+      fontSize: 15,
+      fontWeight: "700",
       color: t.accent,
     },
     generateRow: {
