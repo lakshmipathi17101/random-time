@@ -35,24 +35,73 @@ import type {
 
 let _availabilityOverride: boolean | null = null;
 
+/** Lazily-resolved reference to the real native module, or null if absent. */
+let _nativeCache: { resolved: boolean; value: unknown } = {
+  resolved: false,
+  value: null,
+};
+
+interface RawNativeAppControl {
+  getPermissionStatus(): Promise<PermissionStatus>;
+  requestUsageStatsPermission(): Promise<void>;
+  requestOverlayPermission(): Promise<void>;
+  requestAccessibilityPermission(): Promise<void>;
+  // Future phases will add: getInstalledApps, getUsageStats,
+  // startFocusSession, endFocusSession, getActiveSession,
+  // useEmergencyUnlock, and event-emitter constants.
+}
+
 /**
- * Whether the real native module is wired in. Today: always false (managed Expo).
- * After Phase 11.0 prebuild + Phase 11.3 sideload flavor: true when
- * `BuildConfig.HAS_BLOCKER === true` and `NativeModules.AppControl` exists.
+ * Best-effort lookup of `NativeModules.AppControl`. Returns null if the
+ * native module isn't installed (managed Expo, web, jest, the
+ * `playStoreLite` flavor before 11.3 lands the module, etc.).
+ *
+ * Cached on first call because the lookup itself is a tiny dynamic
+ * `require` and we don't want to incur it on every method invocation.
+ */
+function getRawNative(): RawNativeAppControl | null {
+  if (_nativeCache.resolved) {
+    return _nativeCache.value as RawNativeAppControl | null;
+  }
+  let resolved: RawNativeAppControl | null = null;
+  try {
+    // Dynamic require so jest / managed Expo / web can run without
+    // pulling react-native's native binding side effects.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const RN = require("react-native");
+    const mod = RN?.NativeModules?.AppControl;
+    if (mod && typeof mod.getPermissionStatus === "function") {
+      resolved = mod as RawNativeAppControl;
+    }
+  } catch {
+    // require() can throw on platforms where react-native isn't loadable
+    // (e.g. node-only tests). Swallow and fall through.
+  }
+  _nativeCache = { resolved: true, value: resolved };
+  return resolved;
+}
+
+/**
+ * Whether the real native module is wired in. After Phase 11.1 lands
+ * (Kotlin `AppControlModule.kt` + Phase 11.0 prebuild), this is `true`
+ * on Android device builds where the module is registered, and `false`
+ * on managed Expo, web, jest, and the `playStoreLite` flavor.
  *
  * Tests can override via `__setAppControlAvailable(true|false|null)`.
  */
 export function isAppControlAvailable(): boolean {
   if (_availabilityOverride != null) return _availabilityOverride;
-  // TODO(phase-11.0): swap for `NativeModules.AppControl != null` once the
-  // module is wired. Keep behind a try/catch — accessing a missing native
-  // module name throws synchronously on some RN versions.
-  return false;
+  return getRawNative() != null;
 }
 
 /** Test-only: force the availability flag. Pass null to clear the override. */
 export function __setAppControlAvailable(value: boolean | null): void {
   _availabilityOverride = value;
+}
+
+/** Test-only: clear the cached native-module lookup. */
+export function __resetNativeCache(): void {
+  _nativeCache = { resolved: false, value: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -245,10 +294,36 @@ const mockImpl: AppControlNative = {
 // Public facade.
 // ---------------------------------------------------------------------------
 
+/**
+ * Pick the right backing implementation for a single method call.
+ *
+ * Strategy: start from the mock (which implements *every* method, including
+ * unimplemented future ones like `startFocusSession`), then selectively
+ * override individual methods with the real native module if the module
+ * is present AND implements that method.
+ *
+ * This lets us land Kotlin in slices — 11.1 ships permission methods only,
+ * 11.2 will add usage stats, 11.3 will add session management. At each
+ * step we add another override here; calls to not-yet-native methods keep
+ * working via the mock.
+ *
+ * The test-only `__setAppControlAvailable(true)` does NOT activate the
+ * native dispatch (there's no real module in tests). It only changes what
+ * `isAppControlAvailable()` reports.
+ */
 function getImpl(): AppControlNative {
-  // TODO(phase-11.0): after prebuild, route to NativeModules.AppControl when
-  // isAppControlAvailable() is true. Until then, mock is the only impl.
-  return mockImpl;
+  const native = getRawNative();
+  if (!native) return mockImpl;
+  return {
+    ...mockImpl,
+    getPermissionStatus: () => native.getPermissionStatus(),
+    requestUsageStatsPermission: () => native.requestUsageStatsPermission(),
+    requestOverlayPermission: () => native.requestOverlayPermission(),
+    requestAccessibilityPermission: () => native.requestAccessibilityPermission(),
+    // 11.2: getInstalledApps, getUsageStats
+    // 11.3: startFocusSession, endFocusSession, getActiveSession,
+    //       useEmergencyUnlock, onForegroundAppChanged, onBlockedAppLaunched
+  };
 }
 
 const nativeAppControl: AppControlNative = {

@@ -11,4 +11,9 @@
 -keep class com.swmansion.reanimated.** { *; }
 -keep class com.facebook.react.turbomodule.** { *; }
 
+# Phase 11 app-control — the bridge calls getName()/getConstants() and
+# @ReactMethod functions by reflection. Keep the whole package so
+# R8 / ProGuard release builds don't strip the entry points.
+-keep class com.anonymous.randomtime.appcontrol.** { *; }
+
 # Add any project specific keep options here:

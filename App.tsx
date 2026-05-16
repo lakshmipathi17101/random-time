@@ -54,6 +54,7 @@ import {
   formatDuration,
   validateDurationBounds,
 } from "./utils/duration";
+import { useAppControl } from "./hooks/useAppControl";
 
 // ─── Theme context ────────────────────────────────────────────────────────────
 const ThemeContext = createContext<AppTheme>(DARK);
@@ -346,6 +347,10 @@ export default function App() {
   const [durationResult, setDurationResult] = useState<number | null>(null);
   const [durationError, setDurationError] = useState<string | null>(null);
   const [durationCopied, setDurationCopied] = useState(false);
+
+  // Phase 11.1 — App Control hook. Only consumed by the __DEV__ smoke card
+  // for now; will move into a proper Settings screen in 11.2.
+  const appControl = useAppControl();
 
   const isMountedRef = useRef(false);
 
@@ -1011,6 +1016,67 @@ export default function App() {
             >
               <Text style={s.title}>Random Time</Text>
               <Text style={s.subtitle}>Generator</Text>
+
+              {/* Phase 11.1 — Debug smoke card. __DEV__ only.
+                  Lets us verify on-device that:
+                    1) NativeModules.AppControl is registered (isAvailable)
+                    2) getPermissionStatus reflects the real device state
+                    3) requestX() deep-links to the right Settings screen
+                    4) AppState-resume auto-refreshes the status afterwards
+                  Removed once 11.2 lands the real Settings panel. */}
+              {__DEV__ && (
+                <View style={s.debugCard}>
+                  <Text style={s.debugCardTitle}>🔧 App Control (dev)</Text>
+                  <Text style={s.debugCardLine}>
+                    isAvailable: {appControl.isAvailable ? "true" : "false"}
+                  </Text>
+                  <Text style={s.debugCardLine}>
+                    loading: {appControl.loading ? "true" : "false"}
+                  </Text>
+                  {appControl.error && (
+                    <Text style={[s.debugCardLine, { color: theme.danger }]}>
+                      error: {appControl.error.message}
+                    </Text>
+                  )}
+                  {[
+                    {
+                      key: "usageStats" as const,
+                      label: "Usage Stats",
+                      onRequest: appControl.requestUsageStats,
+                    },
+                    {
+                      key: "overlay" as const,
+                      label: "Overlay",
+                      onRequest: appControl.requestOverlay,
+                    },
+                    {
+                      key: "accessibility" as const,
+                      label: "Accessibility",
+                      onRequest: appControl.requestAccessibility,
+                    },
+                  ].map(({ key, label, onRequest }) => (
+                    <View key={key} style={s.debugCardRow}>
+                      <Text style={s.debugCardRowLabel}>
+                        {appControl.permissions?.[key] ? "✅" : "⬜"} {label}
+                      </Text>
+                      <TouchableOpacity
+                        style={s.debugCardButton}
+                        onPress={onRequest}
+                        accessibilityLabel={`Request ${label} permission`}
+                      >
+                        <Text style={s.debugCardButtonText}>Request</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  <TouchableOpacity
+                    style={[s.debugCardButton, { alignSelf: "flex-start", marginTop: 6 }]}
+                    onPress={appControl.refresh}
+                    accessibilityLabel="Refresh permission status"
+                  >
+                    <Text style={s.debugCardButtonText}>Refresh</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
 
               {/* Phase 10 — Next Nudge card */}
               {dbReady && nextNudge && (
@@ -1715,6 +1781,51 @@ function makeStyles(t: AppTheme) {
       fontSize: 36,
       fontWeight: "700",
       marginBottom: 10,
+    },
+    // Phase 11.1 — Debug smoke card
+    debugCard: {
+      width: "100%",
+      maxWidth: 400,
+      backgroundColor: t.surface2,
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    debugCardTitle: {
+      color: t.text,
+      fontSize: 13,
+      fontWeight: "700",
+      marginBottom: 6,
+    },
+    debugCardLine: {
+      color: t.textMuted,
+      fontSize: 12,
+      marginBottom: 2,
+    },
+    debugCardRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginTop: 6,
+    },
+    debugCardRowLabel: {
+      color: t.text,
+      fontSize: 13,
+      flex: 1,
+    },
+    debugCardButton: {
+      backgroundColor: t.accent,
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 6,
+    },
+    debugCardButtonText: {
+      color: "#ffffff",
+      fontSize: 12,
+      fontWeight: "600",
     },
     // Phase 10 — Next Nudge card, Energy prompt, Surprise Me
     nextNudgeCard: {

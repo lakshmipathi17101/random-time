@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.READ_CALENDAR"/>
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
@@ -6,6 +7,19 @@
   <uses-permission android:name="android.permission.VIBRATE"/>
   <uses-permission android:name="android.permission.WRITE_CALENDAR"/>
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+  <!-- Phase 11 app-control. UsageStats is a "protected" / "special" permission;
+       it cannot be granted at runtime — the user must enable it in Settings.
+       Declaring it here lets us deep-link to the right Settings screen and
+       lets `AppOpsManager` confirm whether it's been granted. -->
+  <uses-permission
+      android:name="android.permission.PACKAGE_USAGE_STATS"
+      tools:ignore="ProtectedPermissions"/>
+  <!-- Phase 11 app-control. QUERY_ALL_PACKAGES required on API 30+ to list
+       installed apps (the app picker). Play Store will scrutinize this; we
+       only use the response for the user-facing app picker. -->
+  <uses-permission
+      android:name="android.permission.QUERY_ALL_PACKAGES"
+      tools:ignore="QueryAllPackagesPermission"/>
   <queries>
     <intent>
       <action android:name="android.intent.action.VIEW"/>

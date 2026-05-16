@@ -156,11 +156,30 @@
 - [x] Commit the prebuild snapshot
 
 ### 11.1 — Permission plumbing
-- [ ] `AppControlModule.kt` skeleton: `getPermissionStatus()`,
+- [x] `AppControlModule.kt` skeleton with `getPermissionStatus()`,
       `requestAccessibilityPermission()`, `requestUsageStatsPermission()`,
-      `requestOverlayPermission()`
-- [ ] `useAppControl()` JS hook
-- [ ] Settings → "App Control" entry showing each permission's state
+      `requestOverlayPermission()` — deep-links to Settings, AppOps query
+      for `PACKAGE_USAGE_STATS`, `Settings.canDrawOverlays` for overlay,
+      `ENABLED_ACCESSIBILITY_SERVICES` scan for accessibility.
+- [x] `AppControlPackage.kt` registered in `MainApplication.kt`.
+- [x] `AndroidManifest.xml`: declared `PACKAGE_USAGE_STATS` (with
+      `tools:ignore="ProtectedPermissions"`) and `QUERY_ALL_PACKAGES`
+      (needs flavor-gating before Play Store submission — see 11.5).
+- [x] `proguard-rules.pro`: `-keep` for the appcontrol package so R8
+      doesn't strip reflection-based bridge entry points.
+- [x] `nativeAppControl.ts`: dispatch the four implemented native methods
+      to `NativeModules.AppControl` when present; spread mock for
+      unimplemented future methods.
+- [x] `hooks/useAppControl.ts`: thin React wrapper around the facade
+      with AppState-on-resume auto-refresh, mount-cleanup safety,
+      `isAvailable` flag for hiding UI on managed Expo / Play Store
+      Lite builds. Tests deferred to 11.2 (needs
+      `@testing-library/react-native`).
+- [x] `App.tsx`: `__DEV__`-gated smoke card showing isAvailable + the
+      three permission booleans + Request buttons + Refresh button —
+      lets the user verify the Settings round-trip on a real device.
+- [ ] Full Settings → "App Control" entry showing each permission's
+      state — deferred to 11.2 with the rest of the picker UI.
 
 ### 11.2 — Usage stats (Play Store flavor's full feature)
 - [ ] `getUsageStats(sinceMs)` against `UsageStatsManager`
