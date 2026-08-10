@@ -40,7 +40,9 @@ export type SettingKey =
   | "advanced_add_fields"
   /** Phase 7 — random duration generator */
   | "duration_min_minutes"
-  | "duration_max_minutes";
+  | "duration_max_minutes"
+  /** Phase 12 — overlay permission gate */
+  | "overlay_gate_dismissed";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 

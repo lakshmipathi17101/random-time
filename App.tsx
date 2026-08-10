@@ -36,6 +36,7 @@ import {
   scheduleReminder,
   scheduleAlarm,
   scheduleGentleNudge,
+  setupOverlayAlarmResponseHandler,
 } from "./notificationService";
 import { DARK, LIGHT, AppTheme } from "./theme";
 import {
@@ -352,6 +353,11 @@ export default function App() {
   // for now; will move into a proper Settings screen in 11.2.
   const appControl = useAppControl();
 
+  // Phase 12 — overlay permission gate
+  const [hasDismissedOverlayGate, setHasDismissedOverlayGate] = useState(false);
+  // Tracks previous overlay permission value so we can detect false → true transitions.
+  const prevOverlayGrantedRef = useRef<boolean | null>(null);
+
   const isMountedRef = useRef(false);
 
   // Tick every second so the Next Nudge countdown stays fresh.
@@ -389,6 +395,8 @@ export default function App() {
       // Phase 7 — random duration
       const savedDurationMin = await getSetting("duration_min_minutes");
       const savedDurationMax = await getSetting("duration_max_minutes");
+      // Phase 12 — overlay permission gate dismissed flag
+      const savedOverlayGateDismissed = await getSetting("overlay_gate_dismissed");
 
       if (saved24h !== null) setIs24h(saved24h === "true");
       if (savedMinH !== null) setMinH(savedMinH);
@@ -405,6 +413,7 @@ export default function App() {
       if (savedPreNudge !== null) setPreNudgeEnabled(savedPreNudge === "true");
       if (savedDurationMin !== null) setDurationMin(savedDurationMin);
       if (savedDurationMax !== null) setDurationMax(savedDurationMax);
+      if (savedOverlayGateDismissed === "true") setHasDismissedOverlayGate(true);
 
       // Energy level: only carry over if it was set today; otherwise prompt.
       const todayKey = new Date().toISOString().slice(0, 10);
@@ -468,7 +477,7 @@ export default function App() {
       await loadTasks();
     };
 
-    const cleanup = setupNotificationResponseHandler({
+    const cleanupNotif = setupNotificationResponseHandler({
       onDone: async (taskId) => {
         await updateTaskStatus(taskId, "done");
         await loadTasks();
@@ -480,7 +489,31 @@ export default function App() {
         void rescheduleTask(taskId, true);
       },
     });
-    return cleanup;
+
+    // Phase 12 — also handle overlay alarm actions (same Done/Postpone/Reroll
+    // semantics, but taskId is a string from the overlay bridge).
+    const cleanupOverlay = setupOverlayAlarmResponseHandler({
+      onDone: async (taskId) => {
+        const numId = parseInt(taskId, 10);
+        if (!isNaN(numId)) {
+          await updateTaskStatus(numId, "done");
+          await loadTasks();
+        }
+      },
+      onPostpone: (taskId) => {
+        const numId = parseInt(taskId, 10);
+        if (!isNaN(numId)) void rescheduleTask(numId, false);
+      },
+      onReroll: (taskId) => {
+        const numId = parseInt(taskId, 10);
+        if (!isNaN(numId)) void rescheduleTask(numId, true);
+      },
+    });
+
+    return () => {
+      cleanupNotif();
+      cleanupOverlay();
+    };
   }, [
     loadTasks,
     minH, minM, minS, maxH, maxM, maxS,
@@ -611,6 +644,21 @@ export default function App() {
   const dismissEnergyPrompt = useCallback(() => {
     setEnergyPromptDismissed(true);
   }, []);
+
+  // Phase 12 — auto-clear the overlay gate dismissed flag when the user
+  // grants the overlay permission (false → true transition).
+  useEffect(() => {
+    const granted = appControl.permissions?.overlay ?? null;
+    if (granted === null) return;
+    const prev = prevOverlayGrantedRef.current;
+    prevOverlayGrantedRef.current = granted;
+    // Only act on the transition: was false (or unknown), now true.
+    if (prev !== true && granted === true) {
+      setHasDismissedOverlayGate(false);
+      // Persist the cleared state so the card stays hidden on re-launch.
+      void upsertSetting("overlay_gate_dismissed", "false");
+    }
+  }, [appControl.permissions?.overlay]);
 
   const togglePreNudge = useCallback(async () => {
     const next = !preNudgeEnabled;
@@ -1077,6 +1125,48 @@ export default function App() {
                   </TouchableOpacity>
                 </View>
               )}
+
+              {/* Phase 12 — Overlay permission gate card (production-visible).
+                  Shows when overlay permission is not granted AND the user has
+                  not dismissed it this session (persisted across launches). */}
+              {appControl.isAvailable &&
+                appControl.permissions?.overlay === false &&
+                !hasDismissedOverlayGate && (
+                  <View style={s.overlayPermissionCard}>
+                    <Text style={s.overlayPermissionTitle}>
+                      Enable Full-Screen Alarms
+                    </Text>
+                    <Text style={s.overlayPermissionBody}>
+                      Random Time can pop a full-screen alarm with Done /
+                      Postpone / Re-roll buttons even when you&apos;re in
+                      another app. Grant &quot;Display over other apps&quot; to
+                      enable it.
+                    </Text>
+                    <View style={s.overlayPermissionRow}>
+                      <TouchableOpacity
+                        style={s.overlayPermissionBtnPrimary}
+                        onPress={appControl.requestOverlay}
+                        accessibilityLabel="Enable display over other apps permission"
+                        accessibilityRole="button"
+                      >
+                        <Text style={s.overlayPermissionBtnText}>Enable</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={s.overlayPermissionBtnSecondary}
+                        onPress={async () => {
+                          setHasDismissedOverlayGate(true);
+                          await upsertSetting("overlay_gate_dismissed", "true");
+                        }}
+                        accessibilityLabel="Dismiss overlay permission prompt"
+                        accessibilityRole="button"
+                      >
+                        <Text style={[s.overlayPermissionBtnText, { color: theme.textMuted }]}>
+                          Not now
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
 
               {/* Phase 10 — Next Nudge card */}
               {dbReady && nextNudge && (
@@ -1826,6 +1916,50 @@ function makeStyles(t: AppTheme) {
       color: "#ffffff",
       fontSize: 12,
       fontWeight: "600",
+    },
+    // Phase 12 — Overlay permission gate card
+    overlayPermissionCard: {
+      width: "100%",
+      maxWidth: 400,
+      backgroundColor: t.surface,
+      borderRadius: 16,
+      paddingVertical: 16,
+      paddingHorizontal: 18,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: t.accent + "55",
+    },
+    overlayPermissionTitle: {
+      fontSize: 16,
+      fontWeight: "700",
+      color: t.text,
+      marginBottom: 8,
+    },
+    overlayPermissionBody: {
+      fontSize: 14,
+      color: t.textMuted,
+      lineHeight: 20,
+      marginBottom: 14,
+    },
+    overlayPermissionRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+    },
+    overlayPermissionBtnPrimary: {
+      backgroundColor: t.accent,
+      paddingVertical: 10,
+      paddingHorizontal: 20,
+      borderRadius: 10,
+    },
+    overlayPermissionBtnSecondary: {
+      paddingVertical: 10,
+      paddingHorizontal: 8,
+    },
+    overlayPermissionBtnText: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: "#ffffff",
     },
     // Phase 10 — Next Nudge card, Energy prompt, Surprise Me
     nextNudgeCard: {
