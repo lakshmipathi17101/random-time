@@ -3,6 +3,44 @@
  * Mocks expo-notifications with self-contained jest.fn() factories.
  */
 
+// ---------------------------------------------------------------------------
+// Phase 12 — Mock overlayAlarmBridge before importing notificationService so
+// that the module-level side effects (setNotificationHandler) see the mock.
+//
+// jest.mock() factories are hoisted and cannot reference out-of-scope
+// variables. Variables prefixed with "mock" (case-insensitive) are allowed.
+// We declare mockOverlayListeners at module scope so both the factory and
+// the __emitOverlayAlarmAction helper can share it.
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line prefer-const
+let mockOverlayListeners: Array<(p: { taskId: string; action: string }) => void> = [];
+
+jest.mock("../overlayAlarmBridge", () => {
+  const mockFireOverlayAlarm = jest.fn().mockResolvedValue({ fired: "overlay" });
+  const mockDismissOverlayAlarm = jest.fn().mockResolvedValue(undefined);
+  const mockOnAlarmAction = jest.fn().mockImplementation((listener) => {
+    mockOverlayListeners.push(listener);
+    return () => {
+      const idx = mockOverlayListeners.indexOf(listener);
+      if (idx !== -1) mockOverlayListeners.splice(idx, 1);
+    };
+  });
+
+  return {
+    __esModule: true,
+    default: {
+      fireOverlayAlarm: mockFireOverlayAlarm,
+      dismissOverlayAlarm: mockDismissOverlayAlarm,
+      onAlarmAction: mockOnAlarmAction,
+    },
+    // Test-only helper — matches the real overlayAlarmBridge.__emitOverlayAlarmAction API.
+    __emitOverlayAlarmAction: (payload: { taskId: string; action: string }) => {
+      mockOverlayListeners.forEach((l) => l(payload));
+    },
+  };
+});
+
 // Self-contained factory — all jest.fn() created inside to avoid hoisting issues
 jest.mock("expo-notifications", () => ({
   setNotificationHandler: jest.fn(),
@@ -20,6 +58,7 @@ jest.mock("expo-notifications", () => ({
 // jest-expo already mocks react-native — rely on its Platform.OS default (ios)
 
 import * as Notifications from "expo-notifications";
+import overlayAlarmBridge, { __emitOverlayAlarmAction } from "../overlayAlarmBridge";
 import {
   requestNotificationPermission,
   setupNotificationResponseHandler,
@@ -27,6 +66,8 @@ import {
   scheduleAlarm,
   cancelNotification,
   scheduleGentleNudge,
+  fireOverlayAlarmNow,
+  setupOverlayAlarmResponseHandler,
 } from "../notificationService";
 
 // Typed references to the mock functions
@@ -367,5 +408,109 @@ describe("scheduleGentleNudge", () => {
     const payload = mockSchedule.mock.calls[0][0];
     // "coming up in 5 minutes" should appear in the body
     expect(payload.content.body).toContain("5 minutes");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 12 — fireOverlayAlarmNow
+// ---------------------------------------------------------------------------
+describe("fireOverlayAlarmNow", () => {
+  const mockFireOverlayAlarm = jest.mocked(overlayAlarmBridge.fireOverlayAlarm);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Default: bridge is available and succeeds.
+    mockFireOverlayAlarm.mockResolvedValue({ fired: "overlay" });
+  });
+
+  it("calls overlayAlarmBridge.fireOverlayAlarm with the given taskId and title", async () => {
+    await fireOverlayAlarmNow("task-42", "My Important Task");
+    expect(mockFireOverlayAlarm).toHaveBeenCalledTimes(1);
+    expect(mockFireOverlayAlarm).toHaveBeenCalledWith("task-42", "My Important Task");
+  });
+
+  it("is a no-op (does not throw) when bridge returns 'unavailable'", async () => {
+    mockFireOverlayAlarm.mockResolvedValueOnce({ fired: "unavailable" });
+    await expect(fireOverlayAlarmNow("task-1", "Some Task")).resolves.toBeUndefined();
+  });
+
+  it("is a no-op (does not throw) when bridge returns 'permission_denied'", async () => {
+    mockFireOverlayAlarm.mockResolvedValueOnce({ fired: "permission_denied" });
+    await expect(fireOverlayAlarmNow("task-2", "Another Task")).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 12 — setupOverlayAlarmResponseHandler
+// ---------------------------------------------------------------------------
+describe("setupOverlayAlarmResponseHandler", () => {
+  // __emitOverlayAlarmAction is provided by the jest.mock factory above.
+  // It fires the payload through all active onAlarmAction subscriptions.
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("routes 'done' payload to onDone handler with the correct taskId", () => {
+    const onDone = jest.fn();
+    const onPostpone = jest.fn();
+    const onReroll = jest.fn();
+
+    setupOverlayAlarmResponseHandler({ onDone, onPostpone, onReroll });
+    __emitOverlayAlarmAction({ taskId: "task-done", action: "done" });
+
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledWith("task-done");
+    expect(onPostpone).not.toHaveBeenCalled();
+    expect(onReroll).not.toHaveBeenCalled();
+  });
+
+  it("routes 'reroll' payload to onReroll handler with the correct taskId", () => {
+    const onDone = jest.fn();
+    const onPostpone = jest.fn();
+    const onReroll = jest.fn();
+
+    setupOverlayAlarmResponseHandler({ onDone, onPostpone, onReroll });
+    __emitOverlayAlarmAction({ taskId: "task-reroll", action: "reroll" });
+
+    expect(onReroll).toHaveBeenCalledTimes(1);
+    expect(onReroll).toHaveBeenCalledWith("task-reroll");
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onPostpone).not.toHaveBeenCalled();
+  });
+
+  it("routes 'postpone' payload to onPostpone handler with the correct taskId", () => {
+    const onDone = jest.fn();
+    const onPostpone = jest.fn();
+    const onReroll = jest.fn();
+
+    setupOverlayAlarmResponseHandler({ onDone, onPostpone, onReroll });
+    __emitOverlayAlarmAction({ taskId: "task-postpone", action: "postpone" });
+
+    expect(onPostpone).toHaveBeenCalledTimes(1);
+    expect(onPostpone).toHaveBeenCalledWith("task-postpone");
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onReroll).not.toHaveBeenCalled();
+  });
+
+  it("returns a cleanup fn that stops event delivery", () => {
+    const onDone = jest.fn();
+    const onPostpone = jest.fn();
+    const onReroll = jest.fn();
+
+    const cleanup = setupOverlayAlarmResponseHandler({ onDone, onPostpone, onReroll });
+
+    // Confirm subscription works before cleanup.
+    __emitOverlayAlarmAction({ taskId: "before-unsub", action: "done" });
+    expect(onDone).toHaveBeenCalledTimes(1);
+
+    // Unsubscribe — no more events should be delivered.
+    cleanup();
+    jest.clearAllMocks();
+
+    __emitOverlayAlarmAction({ taskId: "after-unsub", action: "done" });
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onPostpone).not.toHaveBeenCalled();
+    expect(onReroll).not.toHaveBeenCalled();
   });
 });
