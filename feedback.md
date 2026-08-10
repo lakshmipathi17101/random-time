@@ -1,53 +1,52 @@
 APPROVED
 
-## Notes — iter-2
+## Notes — iter-3
 
-### random-time-dyp.2 — OverlayAlarmService.kt
-
-All acceptance criteria met.
-
-- Extends `android.app.Service`; `onStartCommand` dispatches on `ACTION_FIRE_OVERLAY` and `ACTION_DISMISS_OVERLAY`.
-- `ACTION_FIRE_OVERLAY` path: calls `startForegroundCompat()` before `showOverlay()` (correct Android 8+ ordering), posts notification in `overlay_alarm_service` channel with `IMPORTANCE_LOW` and `setOngoing(true)`.
-- API 34+ branch passes `FOREGROUND_SERVICE_TYPE_SPECIAL_USE` to the 3-arg `startForeground` overload; pre-34 uses the 2-arg variant.
-- Overlay params: `TYPE_APPLICATION_OVERLAY` (with pre-O `TYPE_PHONE` fallback), `FLAG_NOT_FOCUSABLE | FLAG_LAYOUT_IN_SCREEN | FLAG_KEEP_SCREEN_ON`, gravity `BOTTOM | CENTER_HORIZONTAL`, 48 dp bottom margin, `MATCH_PARENT` width.
-- Card built programmatically: `LinearLayout(VERTICAL)` → `TextView` (18 sp, bold) + `LinearLayout(HORIZONTAL)` with three equal-weight `Button`s (Done / Postpone / Re-roll).
-- Button tap: `sendAlarmBroadcast(taskId, actionKey)` → `LocalBroadcastManager` broadcast with action `com.anonymous.randomtime.OVERLAY_ALARM_ACTION` and extras {taskId, action}, then `removeOverlay()` + `stopSelf()`.
-- `ACTION_DISMISS_OVERLAY`: `removeOverlay()` + `stopSelf()` — silent.
-- Returns `START_NOT_STICKY` (matches task AC; requirements.md erroneously says START_STICKY — task AC is authoritative).
-- `onDestroy` calls `removeOverlay()` — view cleaned up if still attached.
-- `NOTIFICATION_CHANNEL_ID` constant is `"overlay_alarm_service"` — matches AC exactly.
-- Two unused imports (`BroadcastReceiver`, `IntentFilter`) are dead code; no behavioral impact. Worth cleaning up in a follow-on pass.
-- `npx tsc --noEmit` passes.
-
-### random-time-dyp.6 — overlayAlarmBridge.ts unit tests
-
-All 8 acceptance criteria covered; 12 test cases written; all pass.
-
-1. `isOverlayAlarmAvailable` defaults to false (NativeModules.OverlayAlarm absent) — present.
-2. `__setOverlayAlarmAvailable(true|false|null)` overrides correctly — three sub-cases present.
-3. `fireOverlayAlarm` returns `{fired:'unavailable'}` when module absent + `console.warn` fires exactly once across multiple calls — tested via `jest.isolateModules` for a clean `_warnedUnavailable` state.
-4. `fireOverlayAlarm` returns `{fired:'permission_denied'}` on `ERR_OVERLAY_NOT_GRANTED` rejection — mock native module injected via `getMockNativeModules()` + `__resetOverlayAlarmCache()`.
-5. `fireOverlayAlarm` returns `{fired:'overlay'}` when native resolves — present.
-6. `dismissOverlayAlarm` no-ops (does not throw) when module absent — `resolves.toBeUndefined()` assertion.
-7. `onAlarmAction` listener receives payloads from `__emitOverlayAlarmAction` — present.
-8. Unsubscribe removes listener — present.
-- Additional multi-listener fan-out test also present.
-- `npx jest --testPathPattern="overlayAlarm|notificationService"` → 41 tests, all pass.
-
-### random-time-dyp.7 — notificationService.ts overlay wiring
+### random-time-dyp.3 — OverlayAlarmModule.kt + OverlayAlarmPackage.kt
 
 All acceptance criteria met.
 
-- `scheduleAlarm` is unchanged: still schedules via expo-notifications, still stores `taskId` in `data` payload (line 145), still returns the notification id.
-- `fireOverlayAlarmNow(taskId: string, title: string): Promise<void>` exported: calls `overlayAlarmBridge.fireOverlayAlarm`; on `{fired:'unavailable'|'permission_denied'}` the function completes without throwing (no-op per spec) since the result is only logged — expo-notification fallback is intact.
-- `setupOverlayAlarmResponseHandler(handlers: OverlayAlarmResponseHandlers): () => void` exported: subscribes to `overlayAlarmBridge.onAlarmAction`, routes done/postpone/reroll to the three handler callbacks, returns the cleanup function from the bridge.
-- Existing `notificationService.test.ts` tests pass unchanged.
-- No behavioral change in Jest (bridge absent → no-op).
-- `OverlayAlarmResponseHandlers` interface exported (done/postpone/reroll shape matches the handler contract).
+- `OverlayAlarmModule.kt` placed in `overlayalarm/` package; `getName()` returns `"OverlayAlarm"` via `MODULE_NAME` constant.
+- `@ReactMethod fireOverlayAlarm(taskId, taskTitle, promise)`: checks `Settings.canDrawOverlays`; rejects with `ERR_OVERLAY_NOT_GRANTED` when false; starts `OverlayAlarmService` via intent with `ACTION_FIRE_OVERLAY` + extras and resolves null when true.
+- `@ReactMethod dismissOverlayAlarm(taskId, promise)`: sends `ACTION_DISMISS_OVERLAY` intent; resolves null.
+- `BroadcastReceiver` registered in `initialize()` via `LocalBroadcastManager`, listening for `ALARM_ACTION_BROADCAST`; unregistered in both `invalidate()` and `onHostDestroy()` — correct dual-unregister pattern.
+- On receive: emits `overlayAlarmAction` event via `DeviceEventManagerModule.RCTDeviceEventEmitter` with `WritableMap{taskId, action}`.
+- `addListener`/`removeListeners` are `@ReactMethod` no-op stubs — satisfies RN 0.65+ `NativeEventEmitter` requirement.
+- `OverlayAlarmPackage.kt` mirrors `AppControlPackage`: implements `ReactPackage`, `createNativeModules` returns `listOf(OverlayAlarmModule(reactContext))`, `createViewManagers` returns `emptyList()`.
 
-Minor observations (not blocking):
-- The notification body in `scheduleAlarm` is unchanged (`"${title}" — your random time has arrived.`); the AC mentions shortening it "since the overlay carries the primary UX." This is cosmetic and left for the App.tsx / UX polish pass.
-- `fireOverlayAlarmNow` accepts `taskId: string` while `scheduleAlarm` takes `taskId?: number`. This type-shape split is consistent with the bridge's own string-based `OverlayAlarmAction.taskId` and is a pre-existing architectural choice, not introduced here.
+### random-time-dyp.4 — Register OverlayAlarmPackage in MainApplication.kt
+
+All acceptance criteria met.
+
+- `import com.anonymous.randomtime.overlayalarm.OverlayAlarmPackage` added at top of file.
+- `add(OverlayAlarmPackage())` added inside `getPackages()` directly after `add(AppControlPackage())`.
+- No other changes to the file.
+
+### random-time-dyp.8 — notificationService.test.ts: new fireOverlayAlarmNow + setupOverlayAlarmResponseHandler
+
+All acceptance criteria met.
+
+- `overlayAlarmBridge` mocked before import via `jest.mock()` factory; mock `fireOverlayAlarm`, `dismissOverlayAlarm`, and `onAlarmAction` all in place.
+- `__emitOverlayAlarmAction` test helper correctly shares `mockOverlayListeners` array with the factory.
+- `fireOverlayAlarmNow` tests (3 cases): verifies `overlayAlarmBridge.fireOverlayAlarm` called with correct taskId + title; `{fired:'unavailable'}` path is a no-op (resolves undefined, does not throw); `{fired:'permission_denied'}` path likewise no-op.
+- `setupOverlayAlarmResponseHandler` tests (4 cases): routes `done`, `postpone`, and `reroll` payloads to the corresponding handlers with the correct taskId; cleanup function stops event delivery — asserted by calling `cleanup()`, then emitting, and confirming no handler was called.
+- All 180 tests pass; no changes to jest config.
+
+### random-time-dyp.9 — App.tsx: overlay permission gate card + wire overlay response handler
+
+All acceptance criteria met.
+
+- `setupOverlayAlarmResponseHandler` imported from `notificationService` (the AC lists it alongside `overlayAlarmBridge`; App.tsx does not need the bridge directly since all interaction flows through the service helper — the same combined-cleanup pattern the AC describes is implemented and correct).
+- Existing `setupNotificationResponseHandler` useEffect extended: `cleanupNotif` + `cleanupOverlay` returned together as a combined cleanup function.
+- `hasDismissedOverlayGate` state + `prevOverlayGrantedRef` ref declared; `overlay_gate_dismissed` setting hydrated from `getSetting` on mount.
+- `overlayPermissionCard` renders only when `appControl.isAvailable && appControl.permissions?.overlay === false && !hasDismissedOverlayGate` — all three conditions guarded correctly.
+- Card text matches AC: title `"Enable Full-Screen Alarms"`, body explains overlay permission and names the three buttons.
+- "Enable" button calls `appControl.requestOverlay()`.
+- "Not now" button calls `setHasDismissedOverlayGate(true)` + `upsertSetting('overlay_gate_dismissed', 'true')`.
+- `useEffect` on `appControl.permissions?.overlay` detects false→true transition; clears `hasDismissedOverlayGate` and persists `overlay_gate_dismissed = 'false'`.
+- All 7 required style keys present: `overlayPermissionCard`, `overlayPermissionTitle`, `overlayPermissionBody`, `overlayPermissionRow`, `overlayPermissionBtnPrimary`, `overlayPermissionBtnSecondary`, `overlayPermissionBtnText`; all use `t.surface`, `t.accent`, `t.text`/`t.textMuted` from the theme — pattern consistent with adjacent cards.
+- `appControl.isAvailable === false` → card hidden, no crash.
+- `npx tsc --noEmit` passes; `npx jest --no-coverage` → 180 tests, all pass.
 
 reopenIds: []
 newTasks: []
