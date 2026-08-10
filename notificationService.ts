@@ -136,6 +136,7 @@ export async function scheduleAlarm(
     return null;
   }
 
+  // Primary path: expo-notifications (works on all platforms / build flavors).
   const id = await Notifications.scheduleNotificationAsync({
     content: {
       title: "Time is now!",
@@ -150,6 +151,27 @@ export async function scheduleAlarm(
       date: eventDate,
     },
   });
+
+  // Phase 12 — also wire AlarmManager-based overlay alarm when a taskId is
+  // provided and the native bridge is available.  The overlay fires at the
+  // same triggerMs and starts OverlayAlarmService via AlarmReceiver.
+  // We don't throw on 'unavailable' or 'permission_denied' — expo-notifications
+  // above already serves as the fallback.
+  if (taskId != null) {
+    const triggerAtMs = eventDate.getTime();
+    const taskIdStr = String(taskId);
+    try {
+      const result = await overlayAlarmBridge.scheduleOverlayAlarm(
+        taskIdStr,
+        title,
+        triggerAtMs
+      );
+      console.log(`[notificationService] scheduleAlarm overlay bridge → ${result.scheduled}`);
+    } catch (err) {
+      // Non-fatal: log and fall through so expo-notifications alarm still fires.
+      console.warn("[notificationService] scheduleAlarm overlay bridge error:", err);
+    }
+  }
 
   return id;
 }

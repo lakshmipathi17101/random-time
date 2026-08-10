@@ -1,9 +1,12 @@
 package com.anonymous.randomtime.overlayalarm
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.provider.Settings
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.facebook.react.bridge.Arguments
@@ -119,6 +122,111 @@ class OverlayAlarmModule(private val reactContext: ReactApplicationContext) :
         }
         reactContext.startService(intent)
         promise.resolve(null)
+    }
+
+    // -------------------------------------------------------------------------
+    // @ReactMethod — scheduleOverlayAlarm
+    // -------------------------------------------------------------------------
+
+    /**
+     * Schedule an overlay alarm via AlarmManager.
+     *
+     * @param taskId      Unique string ID for this alarm (used as PendingIntent
+     *                    request code via hashCode).
+     * @param taskTitle   Human-readable task name shown in the overlay.
+     * @param triggerAtMs Absolute epoch milliseconds at which the alarm fires.
+     * @param promise     Resolves null on success; rejects with
+     *                    ERR_OVERLAY_NOT_GRANTED if SYSTEM_ALERT_WINDOW is
+     *                    not granted.
+     */
+    @ReactMethod
+    fun scheduleOverlayAlarm(
+        taskId: String,
+        taskTitle: String,
+        triggerAtMs: Double,
+        promise: Promise
+    ) {
+        if (!Settings.canDrawOverlays(reactContext)) {
+            promise.reject(
+                ERR_OVERLAY_NOT_GRANTED,
+                "SYSTEM_ALERT_WINDOW permission is not granted. " +
+                        "Call requestOverlayPermission() first."
+            )
+            return
+        }
+
+        val alarmManager = reactContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val pendingIntent = buildAlarmPendingIntent(taskId, taskTitle)
+        val triggerMs = triggerAtMs.toLong()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            // API 23+: check canScheduleExactAlarms (only relevant on API 31+;
+            // below 31 the method doesn't exist so we call setExactAndAllowWhileIdle
+            // unconditionally for API 23-30).
+            val canExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                alarmManager.canScheduleExactAlarms()
+            } else {
+                true
+            }
+            if (canExact) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerMs,
+                    pendingIntent
+                )
+            } else {
+                // Fallback: setExact (no guarantee while idle, but still exact timing).
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerMs,
+                    pendingIntent
+                )
+            }
+        } else {
+            // API < 23: use setExact
+            alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pendingIntent)
+        }
+
+        promise.resolve(null)
+    }
+
+    // -------------------------------------------------------------------------
+    // @ReactMethod — cancelOverlayAlarm
+    // -------------------------------------------------------------------------
+
+    /**
+     * Cancel a previously scheduled overlay alarm.
+     *
+     * @param taskId  The same taskId that was passed to scheduleOverlayAlarm.
+     * @param promise Resolves null always (cancelling a non-existent alarm is a no-op).
+     */
+    @ReactMethod
+    fun cancelOverlayAlarm(taskId: String, promise: Promise) {
+        val alarmManager = reactContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val pendingIntent = buildAlarmPendingIntent(taskId, null)
+        alarmManager.cancel(pendingIntent)
+        promise.resolve(null)
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal — build the PendingIntent for AlarmManager
+    // -------------------------------------------------------------------------
+
+    private fun buildAlarmPendingIntent(taskId: String, taskTitle: String?): PendingIntent {
+        val intent = Intent(reactContext, AlarmReceiver::class.java).apply {
+            putExtra(OverlayAlarmService.EXTRA_TASK_ID, taskId)
+            if (taskTitle != null) {
+                putExtra(OverlayAlarmService.EXTRA_TASK_TITLE, taskTitle)
+            }
+        }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        // Use taskId.hashCode() as the request code so each task gets a unique
+        // PendingIntent that can be independently cancelled.
+        return PendingIntent.getBroadcast(reactContext, taskId.hashCode(), intent, flags)
     }
 
     // -------------------------------------------------------------------------

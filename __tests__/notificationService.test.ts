@@ -19,6 +19,8 @@ let mockOverlayListeners: Array<(p: { taskId: string; action: string }) => void>
 jest.mock("../overlayAlarmBridge", () => {
   const mockFireOverlayAlarm = jest.fn().mockResolvedValue({ fired: "overlay" });
   const mockDismissOverlayAlarm = jest.fn().mockResolvedValue(undefined);
+  const mockScheduleOverlayAlarm = jest.fn().mockResolvedValue({ scheduled: "overlay" });
+  const mockCancelOverlayAlarm = jest.fn().mockResolvedValue(undefined);
   const mockOnAlarmAction = jest.fn().mockImplementation((listener) => {
     mockOverlayListeners.push(listener);
     return () => {
@@ -32,6 +34,8 @@ jest.mock("../overlayAlarmBridge", () => {
     default: {
       fireOverlayAlarm: mockFireOverlayAlarm,
       dismissOverlayAlarm: mockDismissOverlayAlarm,
+      scheduleOverlayAlarm: mockScheduleOverlayAlarm,
+      cancelOverlayAlarm: mockCancelOverlayAlarm,
       onAlarmAction: mockOnAlarmAction,
     },
     // Test-only helper — matches the real overlayAlarmBridge.__emitOverlayAlarmAction API.
@@ -80,6 +84,8 @@ const mockCancel = jest.mocked(Notifications.cancelScheduledNotificationAsync);
 const mockAddListener = jest.mocked(
   Notifications.addNotificationResponseReceivedListener
 );
+// Phase 12 — typed reference to the overlay bridge schedule mock
+const mockScheduleOverlayAlarm = jest.mocked(overlayAlarmBridge.scheduleOverlayAlarm);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -96,6 +102,8 @@ beforeEach(() => {
   mockAddListener.mockReturnValue({
     remove: jest.fn(),
   } as unknown as ReturnType<typeof Notifications.addNotificationResponseReceivedListener>);
+  // Default: bridge scheduleOverlayAlarm succeeds with 'overlay'
+  mockScheduleOverlayAlarm.mockResolvedValue({ scheduled: "overlay" });
 });
 
 // ---------------------------------------------------------------------------
@@ -512,5 +520,78 @@ describe("setupOverlayAlarmResponseHandler", () => {
     expect(onDone).not.toHaveBeenCalled();
     expect(onPostpone).not.toHaveBeenCalled();
     expect(onReroll).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 12 — scheduleAlarm + overlay bridge integration
+// ---------------------------------------------------------------------------
+describe("scheduleAlarm — overlay bridge integration", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-03-01T12:00:00.000Z"));
+    mockSchedule.mockResolvedValue("notif-id-456");
+    mockScheduleOverlayAlarm.mockResolvedValue({ scheduled: "overlay" });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("calls both scheduleNotificationAsync AND scheduleOverlayAlarm when taskId is provided and bridge available", async () => {
+    const futureDate = new Date("2026-03-01T13:00:00.000Z");
+    const id = await scheduleAlarm("Focus block", futureDate, 99);
+
+    // expo-notifications must still be called (fallback always fires)
+    expect(mockSchedule).toHaveBeenCalledTimes(1);
+    // bridge path must also be called
+    expect(mockScheduleOverlayAlarm).toHaveBeenCalledTimes(1);
+    expect(mockScheduleOverlayAlarm).toHaveBeenCalledWith(
+      "99",
+      "Focus block",
+      futureDate.getTime()
+    );
+    // Return value is the expo-notifications id
+    expect(id).toBe("notif-id-456");
+  });
+
+  it("only calls scheduleNotificationAsync (no bridge call) when taskId is omitted", async () => {
+    const futureDate = new Date("2026-03-01T13:00:00.000Z");
+    await scheduleAlarm("No-id task", futureDate);
+
+    expect(mockSchedule).toHaveBeenCalledTimes(1);
+    expect(mockScheduleOverlayAlarm).not.toHaveBeenCalled();
+  });
+
+  it("still resolves (fallback works) when bridge returns permission_denied", async () => {
+    mockScheduleOverlayAlarm.mockResolvedValueOnce({ scheduled: "permission_denied" });
+    const futureDate = new Date("2026-03-01T13:00:00.000Z");
+
+    const id = await scheduleAlarm("Task A", futureDate, 7);
+
+    // Both calls happened; expo-notifications id is returned
+    expect(mockSchedule).toHaveBeenCalledTimes(1);
+    expect(mockScheduleOverlayAlarm).toHaveBeenCalledTimes(1);
+    expect(id).toBe("notif-id-456");
+  });
+
+  it("still resolves when bridge returns unavailable", async () => {
+    mockScheduleOverlayAlarm.mockResolvedValueOnce({ scheduled: "unavailable" });
+    const futureDate = new Date("2026-03-01T13:00:00.000Z");
+
+    const id = await scheduleAlarm("Task B", futureDate, 5);
+
+    expect(mockSchedule).toHaveBeenCalledTimes(1);
+    expect(id).toBe("notif-id-456");
+  });
+
+  it("still resolves when bridge rejects unexpectedly (non-fatal error path)", async () => {
+    mockScheduleOverlayAlarm.mockRejectedValueOnce(new Error("unexpected native error"));
+    const futureDate = new Date("2026-03-01T13:00:00.000Z");
+
+    const id = await scheduleAlarm("Task C", futureDate, 3);
+
+    // scheduleAlarm must not throw; expo-notifications id is returned
+    expect(id).toBe("notif-id-456");
   });
 });

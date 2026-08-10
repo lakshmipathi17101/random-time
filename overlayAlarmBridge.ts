@@ -45,6 +45,8 @@ export type OverlayAlarmAction = {
 interface RawNativeOverlayAlarm {
   fireOverlayAlarm(taskId: string, taskTitle: string): Promise<void>;
   dismissOverlayAlarm(taskId: string): Promise<void>;
+  scheduleOverlayAlarm(taskId: string, taskTitle: string, triggerAtMs: number): Promise<void>;
+  cancelOverlayAlarm(taskId: string): Promise<void>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
 }
@@ -76,7 +78,11 @@ function getRawNative(): RawNativeOverlayAlarm | null {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const RN = require("react-native");
     const mod = RN?.NativeModules?.OverlayAlarm;
-    if (mod && typeof mod.fireOverlayAlarm === "function") {
+    if (
+      mod &&
+      typeof mod.fireOverlayAlarm === "function" &&
+      typeof mod.scheduleOverlayAlarm === "function"
+    ) {
       resolved = mod as RawNativeOverlayAlarm;
     }
   } catch {
@@ -109,6 +115,19 @@ export function __setOverlayAlarmAvailable(value: boolean | null): void {
 /** Test-only: clear the cached native-module lookup so the next call re-probes. */
 export function __resetOverlayAlarmCache(): void {
   _nativeCache = { resolved: false, value: null };
+}
+
+// Mock schedule result override — test-only.
+let _mockScheduleResult: "overlay" | "unavailable" | "permission_denied" | null = null;
+
+/**
+ * Test-only: set the result that scheduleOverlayAlarm returns on the next call.
+ * Pass null to clear (uses availability + real native path).
+ */
+export function __setMockOverlayAlarmScheduled(
+  result: "overlay" | "unavailable" | "permission_denied" | null
+): void {
+  _mockScheduleResult = result;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +228,59 @@ async function dismissOverlayAlarm(taskId: string): Promise<void> {
 }
 
 /**
+ * Schedule the overlay alarm for the given task via AlarmManager.
+ *
+ * Returns:
+ *   { scheduled: 'overlay' }           — alarm was registered with AlarmManager
+ *   { scheduled: 'unavailable' }       — native module absent; no-op
+ *   { scheduled: 'permission_denied' } — native module rejected with ERR_OVERLAY_NOT_GRANTED
+ */
+async function scheduleOverlayAlarm(
+  taskId: string,
+  taskTitle: string,
+  triggerAtMs: number
+): Promise<{ scheduled: "overlay" | "unavailable" | "permission_denied" }> {
+  // Test hook: if a mock result was forced, return it immediately.
+  if (_mockScheduleResult != null) {
+    return { scheduled: _mockScheduleResult };
+  }
+
+  const native = getRawNative();
+  if (!native) {
+    warnUnavailable("scheduleOverlayAlarm");
+    return { scheduled: "unavailable" };
+  }
+  try {
+    await native.scheduleOverlayAlarm(taskId, taskTitle, triggerAtMs);
+    return { scheduled: "overlay" };
+  } catch (err: unknown) {
+    if (
+      err != null &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code: unknown }).code === "ERR_OVERLAY_NOT_GRANTED"
+    ) {
+      return { scheduled: "permission_denied" };
+    }
+    throw err;
+  }
+}
+
+/**
+ * Cancel a previously scheduled overlay alarm.
+ *
+ * No-op (with one-time console.warn) when the native module is absent.
+ */
+async function cancelOverlayAlarm(taskId: string): Promise<void> {
+  const native = getRawNative();
+  if (!native) {
+    warnUnavailable("cancelOverlayAlarm");
+    return;
+  }
+  await native.cancelOverlayAlarm(taskId);
+}
+
+/**
  * Subscribe to alarm-action events (done / postpone / reroll).
  *
  * When the native module is present: wraps NativeEventEmitter.addListener.
@@ -237,6 +309,8 @@ function onAlarmAction(listener: (payload: OverlayAlarmAction) => void): () => v
 const overlayAlarmBridge = {
   fireOverlayAlarm,
   dismissOverlayAlarm,
+  scheduleOverlayAlarm,
+  cancelOverlayAlarm,
   onAlarmAction,
 };
 

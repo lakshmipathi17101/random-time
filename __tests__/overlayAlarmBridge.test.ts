@@ -74,6 +74,8 @@ describe("isOverlayAlarmAvailable", () => {
     getMockNativeModules().OverlayAlarm = {
       fireOverlayAlarm: jest.fn(),
       dismissOverlayAlarm: jest.fn(),
+      scheduleOverlayAlarm: jest.fn(),
+      cancelOverlayAlarm: jest.fn(),
       addListener: jest.fn(),
       removeListeners: jest.fn(),
     };
@@ -135,6 +137,8 @@ describe("fireOverlayAlarm — permission denied path", () => {
     getMockNativeModules().OverlayAlarm = {
       fireOverlayAlarm: mockFire,
       dismissOverlayAlarm: jest.fn(),
+      scheduleOverlayAlarm: jest.fn(),
+      cancelOverlayAlarm: jest.fn(),
       addListener: jest.fn(),
       removeListeners: jest.fn(),
     };
@@ -154,6 +158,8 @@ describe("fireOverlayAlarm — module present", () => {
     getMockNativeModules().OverlayAlarm = {
       fireOverlayAlarm: mockFire,
       dismissOverlayAlarm: jest.fn(),
+      scheduleOverlayAlarm: jest.fn(),
+      cancelOverlayAlarm: jest.fn(),
       addListener: jest.fn(),
       removeListeners: jest.fn(),
     };
