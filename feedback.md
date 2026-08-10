@@ -1,63 +1,32 @@
-CHANGES NEEDED
+APPROVED
 
-## Sprint review — phase-12 overlay alarms
+## Review — random-time-dyp.14: AlarmManager wiring
 
-### Scope + build health
-- 14 files changed, +1536 / -3 (matches expected scope).
-- `npx tsc --noEmit` — clean.
-- `npx jest --no-coverage` — 9 suites, 180 tests, all pass.
-- 12 commits on branch (3 plan/review + 4 feat + 2 test + 1 register + 1 verify + 1 iter-3 review).
+### Build health
+- `npx tsc --noEmit` — clean (no output).
+- `npx jest --no-coverage` — 9 suites, **185 tests**, all pass (up from 180 pre-dyp.14).
 
-### Definition of done checklist
+### Acceptance criteria checklist
 
-| # | Item | Verdict |
+| # | Criterion | Verdict |
 |---|---|---|
-| 1 | `OverlayAlarmService.kt`, `OverlayAlarmModule.kt`, `OverlayAlarmPackage.kt` committed | PASS — all three files present under `android/app/src/main/java/com/anonymous/randomtime/overlayalarm/`. |
-| 2 | `overlayAlarmBridge.ts` committed with fallback path | PASS — 243 LOC, lazy `getRawNative()`, `warnUnavailable()` guard, fallback listener set for tests, `{fired: 'unavailable' \| 'permission_denied' \| 'overlay'}` return contract. |
-| 3 | `notificationService.ts` routes `scheduleAlarm` through the bridge when available | **FAIL — see gap below.** |
-| 4 | `App.tsx` shows the permission prompt card on first launch | PASS — card gated on `appControl.isAvailable && permissions?.overlay === false && !hasDismissedOverlayGate`; "Enable" wires `appControl.requestOverlay`; "Not now" persists `overlay_gate_dismissed=true`; false→true grant transition auto-clears the dismissed flag. |
-| 5 | `AndroidManifest.xml` declares service + permissions | PASS — `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `POST_NOTIFICATIONS`, plus the `<service>` block with `foregroundServiceType="specialUse"` and the `PROPERTY_SPECIAL_USE_FGS_SUBTYPE=alarms_and_reminders` property. |
-| 6 | `MainApplication.kt` registers the package | PASS — `add(OverlayAlarmPackage())` added directly after `add(AppControlPackage())`. |
-| 7 | `npx tsc --noEmit` passes | PASS. |
-| 8 | Existing tests still pass; new bridge tests pass | PASS — 180/180. |
+| 1 | `AlarmReceiver.kt` exists and starts `OverlayAlarmService` correctly | PASS — `AlarmReceiver : BroadcastReceiver` extracts `taskId`/`taskTitle` from intent extras, builds a `OverlayAlarmService` intent with `ACTION_FIRE_OVERLAY`, and calls `context.startService(serviceIntent)`. Registered `exported=false` so only this app's `AlarmManager` `PendingIntent`s can trigger it. |
+| 2 | `OverlayAlarmModule` has `scheduleOverlayAlarm` + `cancelOverlayAlarm` `@ReactMethod`s | PASS — both methods present with correct `@ReactMethod` annotation. `scheduleOverlayAlarm` takes `taskId: String, taskTitle: String, triggerAtMs: Double, promise: Promise`. `cancelOverlayAlarm` takes `taskId: String, promise: Promise`. Both delegate to `buildAlarmPendingIntent` for consistent `PendingIntent` construction. |
+| 3 | `canScheduleExactAlarms` check present (API 31+ guard) | PASS — inside `scheduleOverlayAlarm`, the code checks `Build.VERSION.SDK_INT >= Build.VERSION_CODES.S` before calling `alarmManager.canScheduleExactAlarms()`. When true it uses `setExactAndAllowWhileIdle`; when false (permission not granted on API 31+) it falls back to `setExact`. Pre-API-23 also handled with plain `setExact`. |
+| 4 | `AndroidManifest.xml` declares `AlarmReceiver` + `SCHEDULE_EXACT_ALARM` + `USE_EXACT_ALARM` | PASS — `<receiver android:name=".overlayalarm.AlarmReceiver" android:exported="false"/>` added. `SCHEDULE_EXACT_ALARM` declared with `android:maxSdkVersion="32"` (correct split-permission approach). `USE_EXACT_ALARM` declared for API 33+. Both present. |
+| 5 | `overlayAlarmBridge.ts` exposes `scheduleOverlayAlarm` + `cancelOverlayAlarm` with fallback | PASS — both functions implemented with the same lazy-native/fallback pattern as `fireOverlayAlarm`. `scheduleOverlayAlarm` returns `{scheduled: 'overlay' | 'unavailable' | 'permission_denied'}`. `cancelOverlayAlarm` is a no-op with one-time `console.warn` when native is absent. Both included in the default export object. |
+| 6 | `notificationService.scheduleAlarm` calls bridge when `taskId` present + bridge available | PASS — after `Notifications.scheduleNotificationAsync` resolves, the code checks `taskId != null` and calls `overlayAlarmBridge.scheduleOverlayAlarm(String(taskId), title, eventDate.getTime())`. Wrapped in `try/catch` so a bridge error is non-fatal and expo-notifications fires as the fallback. |
+| 7 | 5 new tests cover the routing and fallback paths | PASS — `overlayAlarmBridge.test.ts` covers bridge `scheduleOverlayAlarm`/`cancelOverlayAlarm` via `__setMockOverlayAlarmScheduled` hook; `notificationService.test.ts` adds the `"scheduleAlarm — overlay bridge integration"` describe block with 5 tests: both-called-with-taskId, no-bridge-call-without-taskId, resolves-on-permission_denied, resolves-on-unavailable, resolves-on-unexpected-rejection. |
+| 8 | All 185 tests pass | PASS — confirmed by `npx jest` run above. |
 
-### Blocking gap — DoD item 3 not satisfied
+### Additional observations (non-blocking)
+- `buildAlarmPendingIntent` uses `taskId.hashCode()` as the `PendingIntent` request code for uniqueness. For very long or specially-crafted task ID strings, `hashCode()` collisions are theoretically possible, but acceptable for this use case given the SQLite-generated IDs in play.
+- `PendingIntent.FLAG_IMMUTABLE` correctly applied on API 23+, satisfying the Android 12+ requirement.
+- `OverlayAlarmPackage` registered in `MainApplication.kt` alongside `AppControlPackage`.
+- `foregroundServiceType="specialUse"` + `PROPERTY_SPECIAL_USE_FGS_SUBTYPE=alarms_and_reminders` correctly paired (Android 14+ requirement).
+- No new npm dependencies added.
 
-**The overlay alarm never fires in production.** All the scaffolding is in place — the Kotlin service, the JS bridge, the permission UI, the response handler — but the code path that would actually trigger `fireOverlayAlarm` on the alarm date is missing.
+### Summary
+The blocking gap identified in the previous review (overlay never fires in production because `scheduleAlarm` did not call the bridge) is resolved. The AlarmManager path is fully wired: JS schedules via `overlayAlarmBridge.scheduleOverlayAlarm` → native `OverlayAlarmModule.scheduleOverlayAlarm` → `AlarmManager.setExactAndAllowWhileIdle` → `AlarmReceiver` BroadcastReceiver at trigger time → `OverlayAlarmService` draws the overlay. All acceptance criteria met.
 
-Concretely:
-- Requirements §5 says: *"Replace the body of `scheduleAlarm()` with a call to `overlayAlarmBridge.fireOverlayAlarm(taskId, title)` when the native module is available. Keep the existing `expo-notifications` path as the fallback when the bridge is absent."*
-- `notificationService.ts::scheduleAlarm` (lines 130-155) still contains only the pre-Phase-12 `Notifications.scheduleNotificationAsync` call. There is no availability check, no bridge branch, no fallback selector.
-- A new `fireOverlayAlarmNow(taskId, title)` helper (lines 208-214) was added, but a `grep` across the tree shows it is called only from its own test file — never from `App.tsx` or any production caller.
-- Design §Event-flow step 1-2 explicitly reads: *"JS calls `scheduleAlarm(...)` at alarm time. notificationService calls `overlayAlarmBridge.fireOverlayAlarm(...)`."* The current wiring satisfies neither half.
-
-Consequence: on a real Android device with SYSTEM_ALERT_WINDOW granted, tapping "Enable" in the permission card does nothing observable — the alarm still fires as a plain expo-notifications tray notification, exactly as before Phase 12. The three Done/Postpone/Re-roll buttons of the overlay card are shipped as dead code from the user's perspective.
-
-Root cause / design note: expo-notifications schedules on the OS side, so JS is not running at alarm time and cannot invoke `fireOverlayAlarm` from a naive "replace the body" edit. To satisfy the intent of DoD item 3 the branch needs one of:
-- (a) An Android `AlarmManager` + `BroadcastReceiver` that launches `OverlayAlarmService` at the scheduled time (Kotlin side), with `scheduleAlarm` calling into it when the bridge is available, or
-- (b) A notification-response path where the fired `expo-notifications` alarm triggers the JS `fireOverlayAlarmNow` on tap/foreground and the overlay pops from there (weaker UX but preserves the current scheduling model).
-
-Either resolution is a real work item, not a rename/wire-up fix. Option (a) most faithfully matches the design's "appears when the alarm fires even if the app is backgrounded" promise; option (b) keeps the sprint tight but delivers a materially weaker feature than what the requirements describe.
-
-### Other observations (non-blocking)
-- Overlay action taskIds come in as strings; App.tsx `parseInt`s them to match the numeric task IDs from SQLite. Silently drops NaN cases — acceptable defensive handling.
-- `App.tsx` extra `parseInt`/`isNaN` branching (lines 495-511) is a small duplication of `setupNotificationResponseHandler`'s onDone/onPostpone/onReroll semantics; could be DRYed but not required.
-- Kotlin service uses programmatic `LinearLayout` (no XML layout resource) as design.md §"Binding decisions" specified — correct.
-- `foregroundServiceType="specialUse"` correctly paired with the `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` metadata property (Android 14+ requirement).
-- No new npm deps added — matches design constraint.
-- `SYSTEM_ALERT_WINDOW` permission was already declared in Phase 11.1; no double-declare.
-
-### Verdict
-Everything the sprint *built* is well-crafted, thoroughly tested, and matches its stated ACs — but the wired end-to-end trigger is missing, so DoD item 3 is not met and the branch is not in a releasable state. This is a real functional regression against the sprint goal: the user experience is unchanged from pre-Phase-12 despite the whole overlay stack shipping.
-
-reopenIds: []
-newTasks:
-  - id: random-time-dyp.10
-    title: Wire scheduleAlarm through OverlayAlarm bridge (or via native AlarmManager) so the overlay actually fires
-    acceptance:
-      - When SYSTEM_ALERT_WINDOW is granted and `overlayAlarmBridge.isOverlayAlarmAvailable()` is true, an alarm that reaches its scheduled time results in `OverlayAlarmService` drawing the overlay (verified manually on a device or emulator).
-      - When the bridge is unavailable OR the overlay permission is denied, the existing expo-notifications alarm still fires as the fallback (no regression to Phase 10 UX).
-      - `scheduleAlarm()` (or a sibling scheduler) invokes `fireOverlayAlarm` at the correct trigger time — not immediately at schedule time. Preferred implementation: extend `OverlayAlarmService`/`OverlayAlarmModule` with an `AlarmManager.setExactAndAllowWhileIdle` + `PendingIntent` path so trigger works when the app is backgrounded/killed.
-      - Add `SCHEDULE_EXACT_ALARM` (Android 12+) permission and the runtime `canScheduleExactAlarms` check if the AlarmManager path is chosen.
-      - Add a JS integration test (or extend `notificationService.test.ts`) that proves `scheduleAlarm` routes through the bridge when available and falls back to `Notifications.scheduleNotificationAsync` when not.
-      - `npx tsc --noEmit` clean; all existing tests still pass; new tests pass.
+newTasks: []
