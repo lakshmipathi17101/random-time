@@ -57,12 +57,15 @@ class OverlayAlarmService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Must call startForeground unconditionally on every start — including
+        // ACTION_DISMISS_OVERLAY — so Android never throws
+        // ForegroundServiceDidNotStartInTimeException regardless of which action
+        // triggered this delivery.
+        startForegroundCompat()
         when (intent?.action) {
             ACTION_FIRE_OVERLAY -> {
                 val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: ""
                 val taskTitle = intent.getStringExtra(EXTRA_TASK_TITLE) ?: ""
-                // Must call startForeground before showing the overlay (Android 8+ requirement).
-                startForegroundCompat()
                 showOverlay(taskId, taskTitle)
             }
             ACTION_DISMISS_OVERLAY -> {
@@ -159,7 +162,22 @@ class OverlayAlarmService : Service() {
         card.setPadding(sidePadding, dp(16), sidePadding, dp(16))
 
         overlayView = card
-        wm.addView(card, params)
+        try {
+            wm.addView(card, params)
+        } catch (e: Exception) {
+            // Catches android.view.WindowManager.BadTokenException when the
+            // SYSTEM_ALERT_WINDOW permission was revoked between schedule and fire,
+            // and any other unexpected WindowManager error.
+            android.util.Log.e(TAG, "Failed to add overlay view — stopping service", e)
+            // Remove the view if it was partially attached to avoid leaking it.
+            try {
+                wm.removeView(card)
+            } catch (_: Exception) {
+                // View was never attached; ignore.
+            }
+            overlayView = null
+            stopSelf()
+        }
     }
 
     /**
@@ -256,6 +274,8 @@ class OverlayAlarmService : Service() {
     // -------------------------------------------------------------------------
 
     companion object {
+        private const val TAG = "OverlayAlarmService"
+
         const val ACTION_FIRE_OVERLAY = "com.anonymous.randomtime.ACTION_FIRE_OVERLAY"
         const val ACTION_DISMISS_OVERLAY = "com.anonymous.randomtime.ACTION_DISMISS_OVERLAY"
         const val ALARM_ACTION_BROADCAST = "com.anonymous.randomtime.OVERLAY_ALARM_ACTION"

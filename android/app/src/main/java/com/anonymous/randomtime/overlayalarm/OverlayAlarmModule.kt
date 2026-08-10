@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.LifecycleEventListener
@@ -106,7 +107,7 @@ class OverlayAlarmModule(private val reactContext: ReactApplicationContext) :
             putExtra(OverlayAlarmService.EXTRA_TASK_ID, taskId)
             putExtra(OverlayAlarmService.EXTRA_TASK_TITLE, taskTitle)
         }
-        reactContext.startService(intent)
+        ContextCompat.startForegroundService(reactContext, intent)
         promise.resolve(null)
     }
 
@@ -120,7 +121,7 @@ class OverlayAlarmModule(private val reactContext: ReactApplicationContext) :
             action = OverlayAlarmService.ACTION_DISMISS_OVERLAY
             putExtra(OverlayAlarmService.EXTRA_TASK_ID, taskId)
         }
-        reactContext.startService(intent)
+        ContextCompat.startForegroundService(reactContext, intent)
         promise.resolve(null)
     }
 

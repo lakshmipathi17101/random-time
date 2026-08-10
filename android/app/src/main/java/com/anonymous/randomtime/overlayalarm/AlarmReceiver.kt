@@ -3,6 +3,7 @@ package com.anonymous.randomtime.overlayalarm
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import androidx.core.content.ContextCompat
 
 /**
  * Phase 12 — AlarmReceiver.
@@ -25,6 +26,6 @@ class AlarmReceiver : BroadcastReceiver() {
             putExtra(OverlayAlarmService.EXTRA_TASK_ID,    taskId)
             putExtra(OverlayAlarmService.EXTRA_TASK_TITLE, taskTitle)
         }
-        context.startService(serviceIntent)
+        ContextCompat.startForegroundService(context, serviceIntent)
     }
 }
