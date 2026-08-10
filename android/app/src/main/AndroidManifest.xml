@@ -7,6 +7,10 @@
   <uses-permission android:name="android.permission.VIBRATE"/>
   <uses-permission android:name="android.permission.WRITE_CALENDAR"/>
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+  <!-- Phase 12 overlay alarms -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <!-- Phase 11 app-control. UsageStats is a "protected" / "special" permission;
        it cannot be granted at runtime — the user must enable it in Settings.
        Declaring it here lets us deep-link to the right Settings screen and
@@ -37,5 +41,15 @@
         <category android:name="android.intent.category.LAUNCHER"/>
       </intent-filter>
     </activity>
+    <!-- Phase 12 overlay alarms service -->
+    <service
+        android:name=".overlayalarm.OverlayAlarmService"
+        android:exported="false"
+        android:foregroundServiceType="specialUse"
+        android:permission="android.permission.FOREGROUND_SERVICE">
+      <property
+          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+          android:value="alarms_and_reminders"/>
+    </service>
   </application>
 </manifest>
