@@ -1,293 +1,239 @@
-# RandomTime Phase 12 — Integration Test Playbook
+# RandomTime — Integration Test Playbook
 
-App: `com.anonymous.randomtime` · Branch: `feat/phase-12-overlay-alarms`
-Tester device: _____________________ · Android version: _____________________
-Build type tested: `debug` / `release` / `EAS preview` (circle one)
-Test date: _____________________
+App: `com.anonymous.randomtime` · Repo: `E:\E-Will\random-time`
+
+This file is the `integ-test-runner` agent's authoritative playbook. Sections are
+structured for automated execution. Steps that require a physical device are
+labelled **[MANUAL]**; the agent records them as informational, not pass/fail.
+
+---
+
+## Environment
+
+Same as `deploy.md`. The `integ-test-runner` must source the same env block:
+
+```bash
+export JAVA_HOME="C:/Program Files/Microsoft/jdk-17.0.20.8-hotspot"
+export ANDROID_HOME="C:/Users/kvlpv/AppData/Local/Android/Sdk"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
+```
 
 ---
 
 ## Setup
 
-1. **Fresh install** of the debug APK (uninstall any previous version first):
-   ```bash
-   adb uninstall com.anonymous.randomtime
-   adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-   ```
+```bash
+# 1. Install JS dependencies (idempotent)
+npm install
 
-2. **Grant all permissions** when prompted on first launch:
-   - Overlay / Display over other apps (tap "Enable" on the in-app card, then
-     allow in Settings)
-   - Notifications (Android 13+ system prompt)
+# 2. Confirm baseline: TypeScript clean + all tests green
+npx tsc --noEmit
+npx jest --passWithNoTests --forceExit
 
-3. **Keep screen unlocked** during tests T3–T8 unless T9 specifically tests
-   background behaviour.
+# 3. Confirm APK exists (built by deployer before integ-test-runner runs)
+ls android/app/build/outputs/apk/debug/app-debug.apk
+```
 
-4. Keep the device **off battery saver / power saving mode** unless running T9.
+If any of the above fail, stop and report — do not proceed to feature tests.
+
+---
+
+## Reset (between test cycles)
+
+```bash
+# Re-run jest to confirm no regressions from in-cycle changes
+npx jest --passWithNoTests --forceExit
+
+# If a device is connected: clear app data
+adb shell pm clear com.anonymous.randomtime 2>/dev/null || true
+```
+
+---
+
+## Teardown
+
+```bash
+# Uninstall from device (if connected)
+adb uninstall com.anonymous.randomtime 2>/dev/null || true
+
+echo "Teardown complete."
+```
 
 ---
 
 ## Feature tests
 
-Work through each test in order. Record PASS, FAIL, or SKIP in the Results
-Template at the bottom.
+Tests are organised by feature area. Each block states the **automated** check
+the `integ-test-runner` must run and the **manual** verification steps where
+device interaction is required. The agent runs all automated steps, logs the
+results, and files a beads bug for each automated failure. Manual steps are
+noted as "manual required" in the bug.
 
 ---
 
-### T1 — Core app launch
+### F1 — TypeScript build (static correctness)
 
-**Steps**
-1. Tap the RandomTime icon to open the app.
-2. Observe the main screen.
+**Automated**
 
-**Expected**
-- App opens without crash or ANR dialog.
-- Main screen renders: task list and Next Nudge card visible.
-- No red error overlay (Metro error screen) appears.
+```bash
+npx tsc --noEmit
+```
 
-**PASS criteria**: App is interactive within 5 seconds of launch.
+Pass: exit 0, zero errors. Fail: any `error TS` line in output.
 
 ---
 
-### T2 — Add task + schedule alarm
+### F2 — Full Jest suite (unit + DB layer)
 
-**Steps**
-1. Tap the add-task button (or equivalent UI entry point).
-2. Fill in a task title (e.g. "Test alarm task").
-3. Set the reminder time to **1–2 minutes from now**.
-4. Save / confirm.
+**Automated**
 
-**Expected**
-- Task appears in the task list immediately.
-- No error toast or crash.
+```bash
+npx jest --passWithNoTests --forceExit --verbose 2>&1 | tail -30
+```
 
-**PASS criteria**: Task is visible in the list with the correct scheduled time.
+Pass: `Tests: <N> passed, <N> total` and exit 0. Fail: any `FAIL` or
+non-zero exit.
 
----
-
-### T3 — Overlay alarm fires (the Phase 12 feature)
-
-**Pre-condition**: T2 completed; overlay permission granted (T8 path NOT taken).
-
-**Steps**
-1. After saving the task in T2, navigate away from RandomTime — open Settings,
-   a browser, or any other app so RandomTime is in the background.
-2. Wait for the scheduled time (1–2 min).
-3. Observe the screen.
-
-**Expected (PASS)**
-- A floating overlay card appears over the current app.
-- Card shows the task title ("Test alarm task").
-- Card has three buttons: **Done**, **Postpone**, **Re-roll**.
-
-**Failure mode (FAIL)**
-- Only a notification appears in the notification tray and no overlay card
-  shows — indicates either the overlay permission was not granted or the
-  AlarmManager → OverlayAlarmService path failed.
-- App crashes (AlarmReceiver / OverlayAlarmService crash).
-
-**PASS criteria**: Floating card is visible over the foreground app within
-30 seconds of the scheduled time.
+Expected baseline as of Phase 13: **168 tests passing across 9 suites.**
+File a bug if total drops below 168 or any suite fails.
 
 ---
 
-### T4 — Overlay action: Done
+### F3 — DB layer: task_completions
 
-**Pre-condition**: Overlay card is visible (T3 passed).
+**Automated** (covered by Jest suite `__tests__/progressDashboard.test.ts`)
 
-**Steps**
-1. When the overlay card appears, tap **Done**.
+```bash
+npx jest --testPathPattern="progressDashboard" --forceExit --verbose
+```
 
-**Expected**
-- Overlay card dismisses immediately.
-- Return to RandomTime; the task is marked as complete (checked / archived /
-  removed from active list depending on current UI implementation).
-- No crash.
-
-**PASS criteria**: Overlay gone, task state updated.
-
----
-
-### T5 — Overlay action: Postpone
-
-**Pre-condition**: Trigger a new alarm (repeat T2 with a new task, or use
-Re-roll from a previous test) so the overlay appears again.
-
-**Steps**
-1. When the overlay card appears, tap **Postpone**.
-
-**Expected**
-- Overlay card dismisses immediately.
-- Return to RandomTime; the task shows a new scheduled time (later than the
-  original trigger time).
-- No crash.
-
-**PASS criteria**: Overlay gone, task rescheduled to a future time.
+Pass: all 6 describe-block tests green. Checks:
+- `upsertCompletion` inserts and is queryable via `getCompletions`
+- Range boundary: dates outside [start, end] are excluded
+- Upsert idempotency: same task+date → 1 row, updated value
+- `purgeOldCompletions` removes >365-day-old rows
+- Inverted date range returns empty array
 
 ---
 
-### T6 — Overlay action: Re-roll
+### F4 — Overlay alarm bridge (Phase 12)
 
-**Pre-condition**: Trigger a new alarm so the overlay appears.
+**Automated** (covered by Jest suite `__tests__/overlayAlarmBridge.test.ts`)
 
-**Steps**
-1. When the overlay card appears, tap **Re-roll**.
+```bash
+npx jest --testPathPattern="overlayAlarmBridge" --forceExit --verbose
+```
 
-**Expected**
-- Overlay card dismisses immediately.
-- Return to RandomTime; the task is rescheduled to a new time generated by the
-  weighted random engine (respects the bias settings configured in the app).
-- No crash.
+Pass: all 12 cases green. Checks:
+- Module present path: scheduleOverlayAlarm, cancelOverlayAlarm, fireOverlayAlarmNow, dismissOverlayAlarm callable without throw
+- Module absent path: all functions fall back to no-op + console.warn
+- Event subscription lifecycle: subscribe returns an unsubscribe function; calling it does not throw
 
-**PASS criteria**: Overlay gone, task rescheduled via the random engine.
+**[MANUAL — device required]** After automated tests pass, verify on a real device:
 
----
+1. Build and install the debug APK.
+2. Set a task alarm 1–2 min in the future.
+3. Navigate to another app.
+4. Confirm: floating overlay card appears with Done / Postpone / Re-roll.
+5. Tap each button and confirm overlay dismisses and task state updates.
 
-### T7 — Fallback: overlay permission denied
-
-**Pre-condition**: Tests T3–T6 complete.
-
-**Steps**
-1. Open device Settings > Apps > RandomTime > Display over other apps.
-2. Set to **Don't allow** (revoke the overlay permission).
-3. Return to RandomTime; add a new task with a reminder set to 1–2 min out.
-4. Navigate away to another app.
-5. Wait for the scheduled time.
-
-**Expected (PASS)**
-- A standard notification appears in the notification tray.
-- Notification includes action buttons (Done / Postpone / Re-roll) if
-  expanded — or opens the app on tap.
-- No overlay card appears (correct — permission denied).
-- No crash or ANR.
-
-**FAIL criteria**: App crashes; or no notification at all appears; or an
-overlay card appears despite the permission being revoked.
-
-**Cleanup**: Re-grant the overlay permission after this test so subsequent
-tests work correctly.
+Record result as PASS / FAIL / SKIP in the beads issue notes.
 
 ---
 
-### T8 — Permission gate card
+### F5 — Progress Dashboard (Phase 13)
 
-**Steps**
-1. Uninstall the app and reinstall fresh (or: Settings > Apps > RandomTime >
-   Storage > Clear data).
-2. Launch RandomTime **without** granting the overlay permission when prompted.
-3. Observe the main screen.
+**Automated** (covered by Jest suite `__tests__/progressDashboard.test.ts` — same as F3)
 
-**Expected — card appears**
-- An "Enable Full-Screen Alarms" (or similar) permission gate card is visible
-  on the main screen.
+No additional automated tests beyond F3.
 
-4. Tap **Not now**.
+**[MANUAL — device required]** Verify the UI on a real device:
 
-**Expected — card dismissed persistently**
-- Card disappears immediately.
-- Force-close and relaunch the app.
-- Card does **not** reappear (dismissal is persisted).
+1. Launch app, tap **Progress** tab.
+2. Confirm grid loads: rows = task names, columns = day/date headers, cells = tappable circles.
+3. Tap a cell — circle should fill (done). Tap again — circle empties.
+4. Switch range selector: 7d / 30d / 90d / 1y — grid re-renders with correct column count.
+5. At 90d / 1y: columns collapse to W1, W2, … week labels.
+6. Switch to **Chart** view — vertical bars and horizontal progress bars render without crash.
+7. Row tail shows correct running total count.
 
-5. Clear app data again (Settings > Apps > RandomTime > Storage > Clear data).
-6. Launch the app.
-7. On the permission gate card, tap **Enable**.
-
-**Expected — Settings screen opens**
-- The device Settings screen for "Display over other apps" opens for RandomTime.
-
-**PASS criteria**: All three sub-steps above behave as described.
+Record result as PASS / FAIL / SKIP in the beads issue notes.
 
 ---
 
-### T9 — Background / battery optimisation
+### F6 — APK size regression guard (Phase 13)
 
-**Note**: Results here are OEM-dependent. Document the outcome rather than
-expecting a specific PASS/FAIL.
+**Automated**
 
-**Steps**
-1. Enable battery restriction for RandomTime:
-   - Settings > Battery > Battery optimisation > All apps > RandomTime >
-     Optimise (or equivalent path for your OEM).
-   - On Samsung: Settings > Battery and device care > Battery > Background
-     usage limits > Sleeping apps > Add RandomTime.
-2. Schedule a new alarm (1–2 min out).
-3. Lock the screen (or leave the phone idle) and wait.
+```bash
+APK=android/app/build/outputs/apk/debug/app-debug.apk
+SIZE=$(wc -c < "$APK")
+echo "APK size: $((SIZE / 1024 / 1024)) MB"
+# Fail if APK is larger than 60 MB (regression guard)
+if [ "$SIZE" -gt 62914560 ]; then
+  echo "FAIL: APK exceeds 60 MB — ABI filter may not be active (check defaultConfig.ndk and reactNativeArchitectures in gradle.properties)"
+  exit 1
+fi
+echo "PASS: APK within size budget"
+```
 
-**Document**
-- Did the overlay fire? Yes / No
-- Did the notification fire? Yes / No
-- Approximate delay (if any): _____ seconds
-
-**Expected (informational)**
-- On stock Android: overlay and notification should fire within ~30 s of the
-  scheduled time.
-- On aggressive OEM skins (Xiaomi MIUI, OPPO ColorOS, OnePlus OxygenOS): the
-  alarm may be delayed or suppressed entirely.
-
-**Cleanup**: After the test, set RandomTime back to "Don't optimise" to restore
-normal alarm behaviour.
+Expected: 38–48 MB (arm64-v8a only debug build). A size above 60 MB indicates
+`defaultConfig { ndk { abiFilters "arm64-v8a" } }` or
+`reactNativeArchitectures=arm64-v8a` in `gradle.properties` is not being applied.
+Also verify: `unzip -l <apk> | grep lib/ | cut -d/ -f2 | sort -u` should print only `arm64-v8a`.
 
 ---
 
-### T10 — Regression: existing features
+### F7 — Core regression: existing features
 
-Verify that Phase 12 did not break pre-existing behaviour.
+**Automated**
 
-**Steps and expected outcomes**
+```bash
+npx jest --testPathPattern="notificationService|overlayAlarmBridge|progressDashboard" --forceExit --verbose
+```
+
+**[MANUAL — device required]**
 
 | Sub-test | Steps | Expected |
 |----------|-------|----------|
-| T10a — Weighted random time | Tap the random-time generator; generate several times | Times are generated without crash; bias settings (morning/evening/etc.) are respected |
-| T10b — Dark/light theme toggle | Toggle theme in app settings | UI switches themes without crash or layout issues |
-| T10c — Task data persistence | Add a task with notes, category, and priority; force-close the app; relaunch | Task reappears with all fields intact |
-| T10d — Haptic celebration | Complete tasks until a streak is reached | Device vibrates (haptic feedback fires) on streak milestone |
+| T-RAND — Weighted random time | Tap the random-time generator 10 times | Times generated without crash; bias settings respected |
+| T-THEME — Dark/light toggle | Toggle theme in settings | UI switches without crash or layout issues |
+| T-PERSIST — Task data persistence | Add task with notes + priority; force-close; relaunch | Task reappears with all fields intact |
+| T-HAPTIC — Celebration haptic | Complete tasks until a streak fires | Device vibrates on streak milestone |
+| T-NOTIF — Notification permission gate | Fresh install, deny overlay permission | "Enable Full-Screen Alarms" card shown; "Not now" dismissal persists across restarts |
 
 ---
 
-## Results template
+## Beads bug template (for failures)
 
-Copy this table and fill in results after completing each test.
+When the `integ-test-runner` files a bug for a failed automated check, use:
 
-| Test | Result (PASS / FAIL / SKIP) | Notes |
-|------|-----------------------------|-------|
-| T1 — Core app launch | | |
-| T2 — Add task + schedule alarm | | |
-| T3 — Overlay alarm fires | | |
-| T4 — Overlay action: Done | | |
-| T5 — Overlay action: Postpone | | |
-| T6 — Overlay action: Re-roll | | |
-| T7 — Fallback: permission denied | | |
-| T8 — Permission gate card | | |
-| T9 — Battery optimisation (document) | | |
-| T10a — Weighted random time | | |
-| T10b — Theme toggle | | |
-| T10c — Task data persistence | | |
-| T10d — Haptic celebration | | |
-
-**Overall verdict**: PASS / FAIL / PARTIAL (circle one)
+```
+bd create --title="integ: <feature> — <short description>" \
+          --type=bug \
+          --priority=1 \
+          --description="Failure in <feature> during integration test cycle. \
+                         Command: <command>. \
+                         Output: <tail of output>. \
+                         Expected: <what should have happened>." \
+          --acceptance="<feature> automated test exits 0 with N tests passing."
+```
 
 ---
 
 ## Known limitations
 
-- **Overlay does not wake the screen from sleep.** By design — the implementation
-  uses `TYPE_APPLICATION_OVERLAY`, not a full-screen intent. The overlay only
-  appears while the device is already awake and unlocked.
+- **Device tests are manual.** No adb-based UI automation framework is wired;
+  F4, F5, F7 device steps require a human tester. The integ-test-runner marks
+  these as "manual required" rather than FAIL.
 
-- **OEM overlay restrictions.** On some OEM skins — Xiaomi MIUI, OPPO ColorOS,
-  Vivo FuntouchOS — `TYPE_APPLICATION_OVERLAY` windows may be blocked by
-  additional manufacturer-specific restrictions even when the `SYSTEM_ALERT_WINDOW`
-  permission is granted. The fallback to `expo-notifications` handles these
-  devices transparently (the user receives a tray notification instead of the
-  floating card).
+- **Overlay does not wake the screen from sleep.** `TYPE_APPLICATION_OVERLAY`
+  only fires while the device is already awake and unlocked — by design.
 
-- **Battery optimisation on aggressive OEMs.** OnePlus, Xiaomi, and Samsung
-  devices with aggressive battery management may kill AlarmManager alarms
-  entirely when the app is in a restricted state. Disabling battery optimisation
-  for RandomTime (Settings > Battery > RandomTime > Don't optimise) is the
-  recommended workaround. Document your OEM's behaviour in T9.
+- **OEM battery optimisation** (Xiaomi MIUI, OPPO ColorOS, OnePlus) may kill
+  AlarmManager alarms. Disable battery optimisation for RandomTime before
+  device testing: Settings > Battery > RandomTime > Don't optimise.
 
-- **`SCHEDULE_EXACT_ALARM` requires user approval on Android 12 (API 31–32).**
-  If the user revokes this permission, `scheduleOverlayAlarm` falls back to
-  `setExact` (less guaranteed under Doze) rather than failing entirely. The
-  `expo-notifications` alarm path is unaffected.
+- **`SCHEDULE_EXACT_ALARM` user approval on Android 12 (API 31–32).** If
+  revoked, overlay alarm falls back to `setExact` under Doze. The
+  expo-notifications alarm path is unaffected.
