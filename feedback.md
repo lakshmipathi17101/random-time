@@ -1,17 +1,22 @@
 APPROVED
 
-random-time-gxl.2.2 — Met. App.tsx calls `void purgeOldCompletions()` after `await getDb()` in the init useEffect; import added. Non-blocking, consistent with existing void pattern.
+**random-time-gxl.2.5 — Progress Dashboard integration tests**
 
-random-time-gxl.2.3 — Met. ProgressDashboard.tsx exports default component with 7d|30d|90d|1y selector (default 30d), Grid|Chart views, grid with task row headers, day/week columns, tappable circle cells calling upsertCompletion, row-tail totals, and View-only chart bars. No react-native-svg. No inline styles. 8-row cap enforced.
+All four required acceptance criteria are satisfied:
 
-random-time-gxl.2.4 — Met. Progress tab added with correct accessibility roles/state. Home tab state preserved. All colors from theme.ts.
+1. **Insert + range query (AC 1)**: `describe("upsertCompletion + getCompletions") > it("inserts a row and getCompletions returns it for the matching date range")` inserts task 1 for today and asserts `getCompletions(date, date)` returns exactly one row with `{ taskId: 1, date, done: true }`. A companion test verifies a row outside the queried range is NOT returned.
 
-Gates: tsc --noEmit passes; jest 8 suites 161 tests pass; worktree clean; file hygiene clean.
+2. **Upsert idempotency (AC 2)**: `describe("upsertCompletion idempotency") > it("calling upsertCompletion twice on the same task+date updates the row instead of duplicating it")` calls upsertCompletion twice on the same (task 10, today), then asserts length is 1 and `done` flipped to `true`.
 
-Non-blocking observations logged for follow-up:
-- db.ts purgeOldCompletions uses UTC cutoff; ProgressDashboard uses local dates (gxl.2.1 scope, off by 1 day at midnight — harmless at 365d horizon)
-- Week-mode cell toggle writes to last day of week (defensible UX compromise)
-- ProgressDashboard pure helpers (buildDays, buildColumns, pctOf) are module-private and untested; gxl.2.5 only covers db.ts functions
+3. **Purge removes old, keeps today (AC 3)**: `describe("purgeOldCompletions") > it("removes a row dated 366+ days ago and leaves a row dated today")` inserts rows at -366 days and today, purges, then asserts only today remains. A boundary test additionally confirms a row at exactly -365 days (equal to the cutoff) is NOT deleted, which correctly reflects the strict `<` in the DELETE SQL.
+
+4. **startDate > endDate returns empty (AC 4)**: `describe("getCompletions edge cases") > it("returns an empty array when startDate is after endDate")` passes `(today, yesterday)` and expects `[]`. The mock's `row.date >= startDate && row.date <= endDate` filter correctly produces the same behaviour as SQL BETWEEN for an inverted range.
+
+**Infrastructure**: The stateful in-memory Map mock correctly simulates ON CONFLICT upsert (overwrite), date-ranged SELECT (filter), and date-filtered DELETE (iterate and remove). `beforeEach` resets the store without wiping jest mock implementations, avoiding a common brittle pattern.
+
+**Build gates**: `npx jest --watchAll=false` — 168/168 tests pass across 9 suites. `npx tsc --noEmit` — no errors.
+
+**File hygiene**: Commit `110055f` adds exactly one file (`__tests__/progressDashboard.test.ts`). No unrelated artefacts.
 
 reopenIds: []
 newTasks: []
