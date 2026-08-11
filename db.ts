@@ -69,6 +69,14 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       key   TEXT PRIMARY KEY NOT NULL,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS task_completions (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      date    TEXT NOT NULL,
+      done    INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(task_id, date)
+    );
   `);
 
   // Migrations: add new columns if they don't exist yet
@@ -216,5 +224,61 @@ export async function upsertSetting(
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
     key,
     value
+  );
+}
+
+// ---------------------------------------------------------------------------
+// task_completions
+// ---------------------------------------------------------------------------
+
+export interface Completion {
+  taskId: number;
+  date: string;
+  done: boolean;
+}
+
+export async function upsertCompletion(
+  taskId: number,
+  date: string,
+  done: boolean
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO task_completions (task_id, date, done) VALUES (?, ?, ?)
+     ON CONFLICT(task_id, date) DO UPDATE SET done = excluded.done`,
+    taskId,
+    date,
+    done ? 1 : 0
+  );
+}
+
+export async function getCompletions(
+  startDate: string,
+  endDate: string
+): Promise<Completion[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ task_id: number; date: string; done: number }>(
+    `SELECT task_id, date, done
+     FROM task_completions
+     WHERE date BETWEEN ? AND ?
+     ORDER BY date ASC`,
+    startDate,
+    endDate
+  );
+  return rows.map((row) => ({
+    taskId: row.task_id,
+    date: row.date,
+    done: row.done !== 0,
+  }));
+}
+
+export async function purgeOldCompletions(): Promise<void> {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 365);
+  const cutoffStr = cutoff.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+  const db = await getDb();
+  await db.runAsync(
+    `DELETE FROM task_completions WHERE date < ?`,
+    cutoffStr
   );
 }
