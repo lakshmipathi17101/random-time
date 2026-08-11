@@ -1,56 +1,26 @@
 APPROVED
 
-## Notes
+## Notes per task
 
-All ten plan-review criteria pass. Specific findings per criterion:
+### random-time-gxl.1 — arm64-v8a abiFilter
 
-**1. Coverage** — PASS
-- Feature 1 (APK ABI split) is covered by random-time-gxl.1.
-- Feature 2 (Progress Dashboard) is covered by random-time-gxl.2 and its five child tasks.
+All three acceptance criteria met:
+- `android/app/build.gradle` debug variant contains exactly `ndk { abiFilters "arm64-v8a" }` inside `buildTypes.debug`.
+- No other build files changed (diff touches only `android/app/build.gradle` and `db.ts`).
+- `npx tsc --noEmit` passes.
 
-**2. Test tasks** — PASS
-- random-time-gxl.2 (the only feature-typed issue) has random-time-gxl.2.5 [test].
-- random-time-gxl.1 is typed `task` (not `feature`) and covers a Gradle build-config change with no automatable unit test; no test task required.
+### random-time-gxl.2.1 — task_completions schema + DB functions
 
-**3. Acceptance criteria** — PASS
-- All six tasks carry concrete, measurable acceptance criteria. random-time-gxl.2.3 is especially detailed (grid view tappability, chart view rule, StyleSheet.create constraint, theme colors, tsc gate).
+All acceptance criteria met:
 
-**4. Task size** — PASS with observation
-- random-time-gxl.2.3 touches only one new file (ProgressDashboard.tsx) but the design is genuinely non-trivial: grid view with tappable toggle cells, bar-chart view with responsive day/week collapse, date-range segmented control, scroll for >8 tasks, and full theme integration. Correctly assigned L and premium-tier.
-- All other tasks are S or M and within the ~3-file ceiling.
+- `Completion` interface exported with `{ taskId: number; date: string; done: boolean }`. ✓
+- `upsertCompletion(taskId, date, done)` performs an upsert. The AC says "via INSERT OR REPLACE"; the implementation uses `ON CONFLICT(task_id, date) DO UPDATE SET done = excluded.done`. This is functionally equivalent for this schema (no child tables referencing task_completions, so the delete-reinsert vs partial-update distinction has no observable difference). The chosen syntax is the more correct modern upsert form and avoids resetting the autoincrement id. AC intent fully satisfied.
+- `getCompletions(startDate, endDate)` returns `Completion[]` via `WHERE date BETWEEN ? AND ? ORDER BY date ASC`. ✓
+- `purgeOldCompletions()` computes today-minus-365 via JS Date arithmetic, issues `DELETE WHERE date < ?`. ✓
+- Table DDL in `getDb()` with `REFERENCES tasks(id) ON DELETE CASCADE` and `UNIQUE(task_id, date)`. ✓
+- `npx tsc --noEmit` passes. ✓
 
-**5. Dependency wiring** — PASS
-- Test task random-time-gxl.2.5 is downstream of all impl tasks:
-  random-time-gxl.2.5 → random-time-gxl.2.4 → random-time-gxl.2.3 → random-time-gxl.2.1
-  random-time-gxl.2.5 → random-time-gxl.2.2 → random-time-gxl.2.1
-- No test task runs in parallel with its implementation.
+No security issues, no regressions, no stray files.
 
-**6. No scope creep** — PASS. Every task maps directly to a requirement in requirements.md.
-
-**7. No duplicate work** — PASS. Each task is distinct.
-
-**8. Feasibility** — PASS. Each task only uses artifacts produced by its declared dependencies.
-
-**9. bd ready check** — PASS
-- `bd ready` surfaces only random-time-gxl.1 and random-time-gxl.2.1 (both `[impl]` tasks). No feature or sprint-root issue appears. Dependency direction is correct.
-
-**10. Model metadata** — PASS
-- random-time-gxl.1: cheap-tier
-- random-time-gxl.2.1: standard-tier
-- random-time-gxl.2.2: cheap-tier
-- random-time-gxl.2.3: premium-tier
-- random-time-gxl.2.4: cheap-tier
-- random-time-gxl.2.5: standard-tier
-
-All six open tasks carry model metadata. No fallback needed.
-
-## taskAssignments
-
-[
-  {"id":"random-time-gxl.1","bucket":"S","model":"cheap"},
-  {"id":"random-time-gxl.2.1","bucket":"M","model":"standard"},
-  {"id":"random-time-gxl.2.2","bucket":"S","model":"cheap"},
-  {"id":"random-time-gxl.2.3","bucket":"L","model":"premium"},
-  {"id":"random-time-gxl.2.4","bucket":"M","model":"cheap"},
-  {"id":"random-time-gxl.2.5","bucket":"M","model":"standard"}
-]
+reopenIds: []
+newTasks: []
