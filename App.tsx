@@ -56,6 +56,7 @@ import {
   validateDurationBounds,
 } from "./utils/duration";
 import { useAppControl } from "./hooks/useAppControl";
+import ProgressDashboard from "./ProgressDashboard";
 
 // ─── Theme context ────────────────────────────────────────────────────────────
 const ThemeContext = createContext<AppTheme>(DARK);
@@ -352,6 +353,9 @@ export default function App() {
   // Phase 11.1 — App Control hook. Only consumed by the __DEV__ smoke card
   // for now; will move into a proper Settings screen in 11.2.
   const appControl = useAppControl();
+
+  // Phase 13 — Tab navigation
+  const [activeTab, setActiveTab] = useState<'Home' | 'Progress'>('Home');
 
   const isMountedRef = useRef(false);
 
@@ -1008,14 +1012,17 @@ export default function App() {
       <SafeAreaProvider>
         <SafeAreaView style={s.container}>
           <StatusBar style={isDark ? "light" : "dark"} />
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={s.flex}
-          >
-            <ScrollView
-              contentContainerStyle={s.scrollContent}
-              keyboardShouldPersistTaps="handled"
+
+          {/* Tab Content */}
+          {activeTab === 'Home' ? (
+            <KeyboardAvoidingView
+              behavior={Platform.OS === "ios" ? "padding" : "height"}
+              style={s.flex}
             >
+              <ScrollView
+                contentContainerStyle={s.scrollContent}
+                keyboardShouldPersistTaps="handled"
+              >
               <Text style={s.title}>Random Time</Text>
               <Text style={s.subtitle}>Generator</Text>
 
@@ -1543,8 +1550,37 @@ export default function App() {
                   )}
                 </View>
               )}
-            </ScrollView>
-          </KeyboardAvoidingView>
+              </ScrollView>
+            </KeyboardAvoidingView>
+          ) : (
+            <ProgressDashboard isDark={isDark} />
+          )}
+
+          {/* Tab Bar */}
+          <View style={s.tabBar}>
+            <TouchableOpacity
+              style={[s.tabButton, activeTab === 'Home' && s.tabButtonActive]}
+              onPress={() => setActiveTab('Home')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: activeTab === 'Home' }}
+              accessibilityLabel="Home tab"
+            >
+              <Text style={[s.tabButtonText, activeTab === 'Home' && s.tabButtonTextActive]}>
+                Home
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.tabButton, activeTab === 'Progress' && s.tabButtonActive]}
+              onPress={() => setActiveTab('Progress')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: activeTab === 'Progress' }}
+              accessibilityLabel="Progress tab"
+            >
+              <Text style={[s.tabButtonText, activeTab === 'Progress' && s.tabButtonTextActive]}>
+                Progress
+              </Text>
+            </TouchableOpacity>
+          </View>
         </SafeAreaView>
       </SafeAreaProvider>
     </ThemeContext.Provider>
@@ -2502,6 +2538,37 @@ function makeStyles(t: AppTheme) {
       color: t.accent,
       fontSize: 16,
       fontWeight: "700",
+    },
+
+    // Phase 13 — Tab bar
+    tabBar: {
+      flexDirection: "row",
+      borderTopWidth: 1,
+      borderTopColor: t.border,
+      backgroundColor: t.surface,
+      height: 56,
+      paddingHorizontal: 8,
+    },
+    tabButton: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: 12,
+      marginHorizontal: 4,
+      borderBottomWidth: 2,
+      borderBottomColor: "transparent",
+    },
+    tabButtonActive: {
+      borderBottomColor: t.accent,
+      backgroundColor: t.surface2,
+    },
+    tabButtonText: {
+      fontSize: 15,
+      fontWeight: "600",
+      color: t.textMuted,
+    },
+    tabButtonTextActive: {
+      color: t.accent,
     },
   });
 }
