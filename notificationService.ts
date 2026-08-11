@@ -1,5 +1,6 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import overlayAlarmBridge, { OverlayAlarmAction } from "./overlayAlarmBridge";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -135,6 +136,7 @@ export async function scheduleAlarm(
     return null;
   }
 
+  // Primary path: expo-notifications (works on all platforms / build flavors).
   const id = await Notifications.scheduleNotificationAsync({
     content: {
       title: "Time is now!",
@@ -149,6 +151,27 @@ export async function scheduleAlarm(
       date: eventDate,
     },
   });
+
+  // Phase 12 — also wire AlarmManager-based overlay alarm when a taskId is
+  // provided and the native bridge is available.  The overlay fires at the
+  // same triggerMs and starts OverlayAlarmService via AlarmReceiver.
+  // We don't throw on 'unavailable' or 'permission_denied' — expo-notifications
+  // above already serves as the fallback.
+  if (taskId != null) {
+    const triggerAtMs = eventDate.getTime();
+    const taskIdStr = String(taskId);
+    try {
+      const result = await overlayAlarmBridge.scheduleOverlayAlarm(
+        taskIdStr,
+        title,
+        triggerAtMs
+      );
+      console.log(`[notificationService] scheduleAlarm overlay bridge → ${result.scheduled}`);
+    } catch (err) {
+      // Non-fatal: log and fall through so expo-notifications alarm still fires.
+      console.warn("[notificationService] scheduleAlarm overlay bridge error:", err);
+    }
+  }
 
   return id;
 }
@@ -191,4 +214,56 @@ export async function scheduleGentleNudge(
 
 export async function cancelNotification(id: string): Promise<void> {
   await Notifications.cancelScheduledNotificationAsync(id);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 — Overlay alarm integration
+// ---------------------------------------------------------------------------
+
+/**
+ * Immediately fire the overlay alarm for the given task.
+ *
+ * If the native overlay module is unavailable or permission is denied, this
+ * is a no-op — the underlying expo-notifications alarm that was already
+ * scheduled serves as the fallback.
+ */
+export async function fireOverlayAlarmNow(
+  taskId: string,
+  title: string
+): Promise<void> {
+  const result = await overlayAlarmBridge.fireOverlayAlarm(taskId, title);
+  console.log(`[notificationService] fireOverlayAlarmNow → ${result.fired}`);
+}
+
+export interface OverlayAlarmResponseHandlers {
+  onDone: (taskId: string) => void;
+  onPostpone: (taskId: string) => void;
+  onReroll: (taskId: string) => void;
+}
+
+/**
+ * Subscribe to overlay alarm actions (done / postpone / reroll).
+ *
+ * Routes each incoming OverlayAlarmAction to the corresponding handler.
+ * Returns a cleanup function that removes the subscription.
+ *
+ * When running in Jest or any environment where the native OverlayAlarm
+ * module is absent, this is a no-op (bridge returns a no-op unsubscribe).
+ */
+export function setupOverlayAlarmResponseHandler(
+  handlers: OverlayAlarmResponseHandlers
+): () => void {
+  return overlayAlarmBridge.onAlarmAction((payload: OverlayAlarmAction) => {
+    switch (payload.action) {
+      case "done":
+        handlers.onDone(payload.taskId);
+        break;
+      case "postpone":
+        handlers.onPostpone(payload.taskId);
+        break;
+      case "reroll":
+        handlers.onReroll(payload.taskId);
+        break;
+    }
+  });
 }
