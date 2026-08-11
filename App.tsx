@@ -26,6 +26,7 @@ import {
   updateTaskTime,
   getSetting,
   upsertSetting,
+  purgeOldCompletions,
   Task,
   TaskPriority,
   TaskCategory,
@@ -369,6 +370,7 @@ export default function App() {
   useEffect(() => {
     const init = async () => {
       await getDb();
+      void purgeOldCompletions(); // Fire-and-forget: cleanup old completions without blocking app load
 
       const saved24h = await getSetting("is24h");
       const savedMinH = await getSetting("min_h");
