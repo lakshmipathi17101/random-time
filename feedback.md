@@ -1,26 +1,17 @@
 APPROVED
 
-## Notes per task
+random-time-gxl.2.2 — Met. App.tsx calls `void purgeOldCompletions()` after `await getDb()` in the init useEffect; import added. Non-blocking, consistent with existing void pattern.
 
-### random-time-gxl.1 — arm64-v8a abiFilter
+random-time-gxl.2.3 — Met. ProgressDashboard.tsx exports default component with 7d|30d|90d|1y selector (default 30d), Grid|Chart views, grid with task row headers, day/week columns, tappable circle cells calling upsertCompletion, row-tail totals, and View-only chart bars. No react-native-svg. No inline styles. 8-row cap enforced.
 
-All three acceptance criteria met:
-- `android/app/build.gradle` debug variant contains exactly `ndk { abiFilters "arm64-v8a" }` inside `buildTypes.debug`.
-- No other build files changed (diff touches only `android/app/build.gradle` and `db.ts`).
-- `npx tsc --noEmit` passes.
+random-time-gxl.2.4 — Met. Progress tab added with correct accessibility roles/state. Home tab state preserved. All colors from theme.ts.
 
-### random-time-gxl.2.1 — task_completions schema + DB functions
+Gates: tsc --noEmit passes; jest 8 suites 161 tests pass; worktree clean; file hygiene clean.
 
-All acceptance criteria met:
-
-- `Completion` interface exported with `{ taskId: number; date: string; done: boolean }`. ✓
-- `upsertCompletion(taskId, date, done)` performs an upsert. The AC says "via INSERT OR REPLACE"; the implementation uses `ON CONFLICT(task_id, date) DO UPDATE SET done = excluded.done`. This is functionally equivalent for this schema (no child tables referencing task_completions, so the delete-reinsert vs partial-update distinction has no observable difference). The chosen syntax is the more correct modern upsert form and avoids resetting the autoincrement id. AC intent fully satisfied.
-- `getCompletions(startDate, endDate)` returns `Completion[]` via `WHERE date BETWEEN ? AND ? ORDER BY date ASC`. ✓
-- `purgeOldCompletions()` computes today-minus-365 via JS Date arithmetic, issues `DELETE WHERE date < ?`. ✓
-- Table DDL in `getDb()` with `REFERENCES tasks(id) ON DELETE CASCADE` and `UNIQUE(task_id, date)`. ✓
-- `npx tsc --noEmit` passes. ✓
-
-No security issues, no regressions, no stray files.
+Non-blocking observations logged for follow-up:
+- db.ts purgeOldCompletions uses UTC cutoff; ProgressDashboard uses local dates (gxl.2.1 scope, off by 1 day at midnight — harmless at 365d horizon)
+- Week-mode cell toggle writes to last day of week (defensible UX compromise)
+- ProgressDashboard pure helpers (buildDays, buildColumns, pctOf) are module-private and untested; gxl.2.5 only covers db.ts functions
 
 reopenIds: []
 newTasks: []
