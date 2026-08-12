@@ -267,3 +267,32 @@ export function setupOverlayAlarmResponseHandler(
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Phase 14 — App icon badge
+// ---------------------------------------------------------------------------
+
+/**
+ * Sets the app icon badge count via expo-notifications.
+ *
+ * `count` is normalised to a non-negative integer before being passed
+ * along (negative and fractional inputs are clamped/truncated). Badge
+ * support is best-effort: some launchers (notably many Android ones)
+ * don't support badges at all, in which case `setBadgeCountAsync`
+ * resolves `false` rather than throwing. A thrown error is also treated
+ * as a non-fatal `false` result — this must never crash or reject into
+ * the caller.
+ */
+export async function setBadgeCount(count: number): Promise<boolean> {
+  const normalized = Math.max(0, Math.trunc(count));
+  try {
+    return await Notifications.setBadgeCountAsync(normalized);
+  } catch {
+    return false;
+  }
+}
+
+/** Clears the app icon badge (sets it to 0). */
+export async function clearBadge(): Promise<boolean> {
+  return setBadgeCount(0);
+}
