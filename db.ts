@@ -42,7 +42,9 @@ export type SettingKey =
   | "duration_min_minutes"
   | "duration_max_minutes"
   /** Phase 12 — overlay permission gate */
-  | "overlay_gate_dismissed";
+  | "overlay_gate_dismissed"
+  /** Phase 14 — onboarding */
+  | "onboarded";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 
