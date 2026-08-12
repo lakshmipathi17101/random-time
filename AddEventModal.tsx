@@ -136,6 +136,7 @@ export default function AddEventModal({
 
       const notifGranted = await requestNotificationPermission();
       let alarmId: string | null = null;
+      let alarmFailed = false;
       const reminderIds: string[] = [];
 
       if (editTask) {
@@ -202,19 +203,32 @@ export default function AddEventModal({
         });
 
         if (notifGranted) {
-          alarmId = await scheduleAlarm(name, eventDate, newTaskId);
-          if (alarmId) {
-            await updateTask(newTaskId, {
-              title: name,
-              event_date: eventDate.toISOString(),
-              reminder_minutes: effectiveReminderMins[0] ?? 10,
-              notes: notes.trim() || null,
-              alarm_notification_id: alarmId,
-              reminder_notification_id: reminderIds[0] ?? null,
-              reminder_notification_ids: JSON.stringify(reminderIds),
-              category,
-              priority,
-            });
+          // The task row and calendar event are already persisted at this
+          // point, so a throw from here must NOT surface as a total failure:
+          // the user would retry and create a duplicate task. Degrade to
+          // "saved, but without an alarm" instead.
+          try {
+            alarmId = await scheduleAlarm(name, eventDate, newTaskId);
+            if (alarmId) {
+              await updateTask(newTaskId, {
+                title: name,
+                event_date: eventDate.toISOString(),
+                reminder_minutes: effectiveReminderMins[0] ?? 10,
+                notes: notes.trim() || null,
+                alarm_notification_id: alarmId,
+                reminder_notification_id: reminderIds[0] ?? null,
+                reminder_notification_ids: JSON.stringify(reminderIds),
+                category,
+                priority,
+              });
+            }
+          } catch (alarmErr: unknown) {
+            console.warn(
+              "[AddEventModal] alarm scheduling failed after task was saved:",
+              alarmErr
+            );
+            alarmId = null;
+            alarmFailed = true;
           }
         }
       }
@@ -222,7 +236,12 @@ export default function AddEventModal({
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onTaskSaved();
 
-      if (!notifGranted) {
+      if (alarmFailed) {
+        Alert.alert(
+          "Saved without alarm",
+          "Your task was saved, but the alarm couldn't be scheduled. Edit the task to try setting the alarm again."
+        );
+      } else if (!notifGranted) {
         Alert.alert(
           editTask ? "Task updated" : "Event created",
           "Saved. Notification permission was denied — no reminders will fire."
