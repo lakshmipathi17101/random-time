@@ -105,6 +105,53 @@ export function planSurpriseMe(input: ScatterInput): ScatterPlanItem[] {
 }
 
 /**
+ * Resolve a "reschedule to this time-of-day" request to a Date that is
+ * guaranteed to be in the future.
+ *
+ * Reschedules (postpone / re-roll / surprise-me) used to keep the *original*
+ * task's calendar day and just swap in a new random time-of-day. When that day
+ * was today and the drawn time had already passed, the result was an
+ * event_date in the past — and both `scheduleReminder` and `scheduleAlarm`
+ * refuse past dates and return null. The task was then written back as
+ * `pending` with no notifications attached, so it could never fire again:
+ * silent data loss from the user's point of view.
+ *
+ * Picks the earliest of: the reference day, today, or tomorrow that puts
+ * `secondsOfDay` strictly in the future.
+ *
+ * @param reference    Day the task currently sits on.
+ * @param secondsOfDay Target time-of-day, in seconds from midnight.
+ * @param now          Reference "now" (injectable for tests).
+ */
+export function nextOccurrence(
+  reference: Date,
+  secondsOfDay: number,
+  now: Date = new Date()
+): Date {
+  const h = Math.floor(secondsOfDay / 3600);
+  const m = Math.floor((secondsOfDay % 3600) / 60);
+  const s = secondsOfDay % 60;
+
+  const at = (base: Date, dayOffset: number): Date =>
+    new Date(
+      base.getFullYear(),
+      base.getMonth(),
+      base.getDate() + dayOffset,
+      h,
+      m,
+      s
+    );
+
+  const onReference = at(reference, 0);
+  if (onReference.getTime() > now.getTime()) return onReference;
+
+  const today = at(now, 0);
+  if (today.getTime() > now.getTime()) return today;
+
+  return at(now, 1);
+}
+
+/**
  * Convert the current "energy level" setting into a sensible N for surprise-me.
  * Low energy → fewer nudges; High energy → more.
  *

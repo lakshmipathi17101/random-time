@@ -5,6 +5,7 @@
 import {
   planSurpriseMe,
   nudgeCountForEnergy,
+  nextOccurrence,
   type ScatterInput,
 } from "../utils/scheduler";
 
@@ -131,5 +132,67 @@ describe("nudgeCountForEnergy", () => {
 
   it("defaults to 3 when null (unset)", () => {
     expect(nudgeCountForEnergy(null)).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nextOccurrence — reschedules must never land in the past
+// ---------------------------------------------------------------------------
+describe("nextOccurrence", () => {
+  const NOW = new Date(2026, 3, 25, 14, 30, 0); // Apr 25 2026, 14:30 local
+
+  const secs = (h: number, m = 0, s = 0) => h * 3600 + m * 60 + s;
+
+  it("keeps the reference day when that time is still ahead", () => {
+    const reference = new Date(2026, 3, 25);
+    const out = nextOccurrence(reference, secs(16), NOW);
+    expect(out).toEqual(new Date(2026, 3, 25, 16, 0, 0));
+  });
+
+  it("keeps a future reference day even when the time-of-day already passed today", () => {
+    const reference = new Date(2026, 3, 27);
+    const out = nextOccurrence(reference, secs(9), NOW);
+    expect(out).toEqual(new Date(2026, 3, 27, 9, 0, 0));
+  });
+
+  it("rolls to tomorrow when the slot already passed today", () => {
+    const reference = new Date(2026, 3, 25);
+    const out = nextOccurrence(reference, secs(9), NOW);
+    expect(out).toEqual(new Date(2026, 3, 26, 9, 0, 0));
+  });
+
+  it("pulls a past reference day forward to today when the slot is still ahead", () => {
+    const reference = new Date(2026, 3, 20); // five days ago
+    const out = nextOccurrence(reference, secs(16), NOW);
+    expect(out).toEqual(new Date(2026, 3, 25, 16, 0, 0));
+  });
+
+  it("pulls a past reference day to tomorrow when the slot already passed today", () => {
+    const reference = new Date(2026, 3, 20);
+    const out = nextOccurrence(reference, secs(9), NOW);
+    expect(out).toEqual(new Date(2026, 3, 26, 9, 0, 0));
+  });
+
+  it("always returns a strictly future date across the whole day range", () => {
+    const reference = new Date(2026, 3, 25);
+    for (let h = 0; h < 24; h++) {
+      const out = nextOccurrence(reference, secs(h, 15, 30), NOW);
+      expect(out.getTime()).toBeGreaterThan(NOW.getTime());
+      expect(out.getHours()).toBe(h);
+      expect(out.getMinutes()).toBe(15);
+      expect(out.getSeconds()).toBe(30);
+    }
+  });
+
+  it("treats a slot exactly equal to now as passed", () => {
+    const reference = new Date(2026, 3, 25);
+    const out = nextOccurrence(reference, secs(14, 30, 0), NOW);
+    expect(out).toEqual(new Date(2026, 3, 26, 14, 30, 0));
+  });
+
+  it("rolls across a month boundary", () => {
+    const endOfMonth = new Date(2026, 3, 30, 23, 0, 0);
+    const out = nextOccurrence(new Date(2026, 3, 30), secs(8), endOfMonth);
+    expect(out).toEqual(new Date(2026, 4, 1, 8, 0, 0));
   });
 });

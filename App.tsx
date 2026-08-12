@@ -32,7 +32,7 @@ import {
   TaskCategory,
 } from "./db";
 import {
-  cancelNotification,
+  cancelTaskNotifications,
   setupNotificationResponseHandler,
   scheduleReminder,
   scheduleAlarm,
@@ -49,6 +49,7 @@ import { calcStreakWithGrace } from "./utils/streak";
 import {
   planSurpriseMe,
   nudgeCountForEnergy,
+  nextOccurrence,
   type EnergyLevel,
 } from "./utils/scheduler";
 import {
@@ -95,6 +96,18 @@ function formatTime12(h: number, m: number, s: number): string {
   const period = h >= 12 ? "PM" : "AM";
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
   return `${pad(h12)}:${pad(m)}:${pad(s)} ${period}`;
+}
+
+/**
+ * Local-time 'YYYY-MM-DD' day key.
+ *
+ * `toISOString().slice(0, 10)` yields the *UTC* day, which rolls over at the
+ * wrong local hour in any non-UTC timezone — e.g. at UTC+5:30 every local time
+ * before 05:30 still reports yesterday's date. Matches the convention already
+ * used by ProgressDashboard's toDateStr.
+ */
+function localDateKey(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /**
@@ -422,18 +435,26 @@ export default function App() {
       if (savedOverlayGateDismissed === "true") setHasDismissedOverlayGate(true);
 
       // Energy level: only carry over if it was set today; otherwise prompt.
-      const todayKey = new Date().toISOString().slice(0, 10);
+      const todayKey = localDateKey();
       if (savedEnergyDate === todayKey && savedEnergy) {
         setEnergyLevelState(savedEnergy as EnergyLevel);
       }
 
       await loadTasks();
-
-      isMountedRef.current = true;
-      setDbReady(true);
     };
 
-    init();
+    // A rejection anywhere in init() (SQLite open, a migration, any getSetting)
+    // previously became an unhandled rejection AND left dbReady false forever —
+    // on a sideloaded release build that is an app stuck on an empty screen with
+    // no way to recover. Always flip dbReady so the UI renders with defaults.
+    init()
+      .catch((err: unknown) => {
+        console.error("[App] initialization failed:", err);
+      })
+      .finally(() => {
+        isMountedRef.current = true;
+        setDbReady(true);
+      });
   }, [loadTasks]);
 
   // Notification action handlers (Done / Postpone / Re-roll from tray)
@@ -462,24 +483,30 @@ export default function App() {
         randomTotal = Math.floor(Math.random() * (range + 1)) + minTotal;
       }
 
-      const { h, m, s } = secondsToTime(randomTotal);
-      const orig = new Date(task.event_date);
-      const newDate = new Date(orig.getFullYear(), orig.getMonth(), orig.getDate(), h, m, s);
+      const newDate = nextOccurrence(new Date(task.event_date), randomTotal);
 
-      if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
-      if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
-      if (task.reminder_notification_ids) {
-        const ids: string[] = JSON.parse(task.reminder_notification_ids);
-        for (const id of ids) await cancelNotification(id);
-      }
+      await cancelTaskNotifications(task);
 
       const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
       const alarmId = await scheduleAlarm(task.title, newDate, task.id);
       // Pre-nudge if enabled and the new alarm is far enough out.
-      if (preNudgeEnabled) {
-        await scheduleGentleNudge(task.title, newDate, 5);
-      }
-      await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
+      const nudgeId = preNudgeEnabled
+        ? await scheduleGentleNudge(task.title, newDate, 5)
+        : null;
+
+      // Persist the pre-nudge id alongside the reminder id. It used to be
+      // discarded, so the "Heads up" notification could never be cancelled and
+      // fired as a ghost after the task was deleted or rescheduled again.
+      const secondaryIds = [reminderId, nudgeId].filter(
+        (id): id is string => id != null
+      );
+      await updateTaskTime(
+        task.id,
+        newDate.toISOString(),
+        alarmId,
+        reminderId,
+        JSON.stringify(secondaryIds)
+      );
       await loadTasks();
     };
 
@@ -642,7 +669,7 @@ export default function App() {
   const setEnergyLevel = useCallback(async (level: EnergyLevel) => {
     setEnergyLevelState(level);
     Haptics.selectionAsync();
-    const todayKey = new Date().toISOString().slice(0, 10);
+    const todayKey = localDateKey();
     await upsertSetting("energy_level", level);
     await upsertSetting("energy_date", todayKey);
   }, []);
@@ -797,12 +824,7 @@ export default function App() {
             for (const id of selectedIds) {
               const task = tasks.find((t) => t.id === id);
               if (!task) continue;
-              if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
-              if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
-              if (task.reminder_notification_ids) {
-                const ids: string[] = JSON.parse(task.reminder_notification_ids);
-                for (const nid of ids) await cancelNotification(nid);
-              }
+              await cancelTaskNotifications(task);
               await deleteTask(id);
             }
             setSelectedIds(new Set());
@@ -825,12 +847,7 @@ export default function App() {
           onPress: async () => {
             const done = await getDoneTasks();
             for (const task of done) {
-              if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
-              if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
-              if (task.reminder_notification_ids) {
-                const ids: string[] = JSON.parse(task.reminder_notification_ids);
-                for (const id of ids) await cancelNotification(id);
-              }
+              await cancelTaskNotifications(task);
               await deleteTask(task.id);
             }
             await loadTasks();
@@ -893,24 +910,31 @@ export default function App() {
       );
       const range = Math.max(maxTotal - minTotal, 0);
       const randomTotal = Math.floor(Math.random() * (range + 1)) + minTotal;
-      const { h, m, s } = secondsToTime(randomTotal);
 
-      const orig = new Date(task.event_date);
-      const newDate = new Date(orig.getFullYear(), orig.getMonth(), orig.getDate(), h, m, s);
+      const newDate = nextOccurrence(new Date(task.event_date), randomTotal);
 
-      if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
-      if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
-      if (task.reminder_notification_ids) {
-        const ids: string[] = JSON.parse(task.reminder_notification_ids);
-        for (const id of ids) await cancelNotification(id);
-      }
+      await cancelTaskNotifications(task);
 
       const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
-      const alarmId = await scheduleAlarm(task.title, newDate);
-      if (preNudgeEnabled) await scheduleGentleNudge(task.title, newDate, 5);
+      // task.id is required: it puts taskId in the notification payload (without
+      // it the tray's Done/Postpone/Re-roll buttons are inert) and is the key
+      // the native overlay alarm is scheduled under.
+      const alarmId = await scheduleAlarm(task.title, newDate, task.id);
+      const nudgeId = preNudgeEnabled
+        ? await scheduleGentleNudge(task.title, newDate, 5)
+        : null;
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
+      const secondaryIds = [reminderId, nudgeId].filter(
+        (id): id is string => id != null
+      );
+      await updateTaskTime(
+        task.id,
+        newDate.toISOString(),
+        alarmId,
+        reminderId,
+        JSON.stringify(secondaryIds)
+      );
       await loadTasks();
     },
     [minH, minM, minS, maxH, maxM, maxS, loadTasks, preNudgeEnabled]
@@ -966,20 +990,32 @@ export default function App() {
     for (const item of plan) {
       const task = pending.find((t) => t.id === item.taskId);
       if (!task) continue;
-      const newDate = new Date(item.newEventDateIso);
+      // planSurpriseMe scatters across *today*, so a slot earlier than the
+      // current time would otherwise be written back as an unfireable past date.
+      const planned = new Date(item.newEventDateIso);
+      const newDate = nextOccurrence(
+        planned,
+        planned.getHours() * 3600 + planned.getMinutes() * 60 + planned.getSeconds()
+      );
 
-      if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
-      if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
-      if (task.reminder_notification_ids) {
-        const ids: string[] = JSON.parse(task.reminder_notification_ids);
-        for (const id of ids) await cancelNotification(id);
-      }
+      await cancelTaskNotifications(task);
 
       const reminderId = await scheduleReminder(task.title, newDate, task.reminder_minutes);
       const alarmId = await scheduleAlarm(task.title, newDate, task.id);
-      if (preNudgeEnabled) await scheduleGentleNudge(task.title, newDate, 5);
+      const nudgeId = preNudgeEnabled
+        ? await scheduleGentleNudge(task.title, newDate, 5)
+        : null;
 
-      await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
+      const secondaryIds = [reminderId, nudgeId].filter(
+        (id): id is string => id != null
+      );
+      await updateTaskTime(
+        task.id,
+        newDate.toISOString(),
+        alarmId,
+        reminderId,
+        JSON.stringify(secondaryIds)
+      );
     }
 
     await loadTasks();
@@ -1036,12 +1072,7 @@ export default function App() {
             text: "Delete",
             style: "destructive",
             onPress: async () => {
-              if (task.alarm_notification_id) await cancelNotification(task.alarm_notification_id);
-              if (task.reminder_notification_id) await cancelNotification(task.reminder_notification_id);
-              if (task.reminder_notification_ids) {
-                const ids: string[] = JSON.parse(task.reminder_notification_ids);
-                for (const id of ids) await cancelNotification(id);
-              }
+              await cancelTaskNotifications(task);
               await deleteTask(task.id);
               await loadTasks();
             },
