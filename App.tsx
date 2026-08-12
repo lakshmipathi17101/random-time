@@ -516,10 +516,21 @@ export default function App() {
       await loadTasks();
     };
 
+    // Marking a task done must also tear down its pending notifications —
+    // otherwise the alarm (and the native full-screen overlay) still fires later
+    // for a task the user already completed.
+    const completeTask = async (taskId: number) => {
+      const task = (await getTasks()).find((t) => t.id === taskId);
+      if (task) {
+        await cancelTaskNotifications(task);
+      }
+      await updateTaskStatus(taskId, "done");
+      await loadTasks();
+    };
+
     const cleanupNotif = setupNotificationResponseHandler({
       onDone: async (taskId) => {
-        await updateTaskStatus(taskId, "done");
-        await loadTasks();
+        await completeTask(taskId);
       },
       onPostpone: (taskId) => {
         void rescheduleTask(taskId, false);
@@ -535,8 +546,7 @@ export default function App() {
       onDone: async (taskId) => {
         const numId = parseInt(taskId, 10);
         if (!isNaN(numId)) {
-          await updateTaskStatus(numId, "done");
-          await loadTasks();
+          await completeTask(numId);
         }
       },
       onPostpone: (taskId) => {
@@ -1059,6 +1069,13 @@ export default function App() {
         }
       } else {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+
+      // Completing a task cancels its pending alarm/reminders/overlay alarm.
+      // Without this, a task ticked off ahead of time still triggers a
+      // full-screen alarm at its scheduled moment.
+      if (newStatus === "done") {
+        await cancelTaskNotifications(task);
       }
 
       await updateTaskStatus(task.id, newStatus);
