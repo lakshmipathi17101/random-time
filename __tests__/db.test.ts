@@ -351,28 +351,97 @@ describe("upsertSetting", () => {
 // ---------------------------------------------------------------------------
 // Migration error handling
 // ---------------------------------------------------------------------------
-describe("getDb migrations", () => {
-  it("silently swallows duplicate column errors during init", async () => {
-    let freshGetDb: () => Promise<unknown>;
+/**
+ * Load a fresh copy of db.ts (with its module-level `_db` / `_dbInit` singleton
+ * state reset) on top of a caller-supplied expo-sqlite mock.
+ *
+ * `jest.isolateModules` does NOT re-execute the module under this preset — the
+ * require inside it returns the already-initialized instance, so any test built
+ * on it silently asserts nothing about initialization. `jest.resetModules()`
+ * plus `jest.doMock` (which, unlike `jest.mock`, is not hoisted) does give a
+ * genuinely fresh module.
+ */
+const loadFreshDb = (
+  openDatabaseAsync: jest.Mock
+): typeof import("../db") => {
+  jest.resetModules();
+  jest.doMock("expo-sqlite", () => ({ openDatabaseAsync }));
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require("../db") as typeof import("../db");
+};
 
-    jest.isolateModules(() => {
-      jest.mock("expo-sqlite", () => ({
-        openDatabaseAsync: jest.fn().mockResolvedValue({
-          execAsync: jest.fn().mockImplementation(async (sql: string) => {
-            if (sql.includes("ADD COLUMN")) {
-              throw new Error("table tasks already has column status");
-            }
-          }),
-          runAsync: jest.fn().mockResolvedValue({ lastInsertRowId: 1 }),
-          getAllAsync: jest.fn().mockResolvedValue([]),
-          getFirstAsync: jest.fn().mockResolvedValue(null),
-        }),
-      }));
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      freshGetDb = require("../db").getDb;
+/** A minimal SQLiteDatabase stand-in that satisfies openAndMigrate(). */
+const makeMockDb = () => ({
+  execAsync: jest.fn().mockResolvedValue(undefined),
+  runAsync: jest.fn().mockResolvedValue({ lastInsertRowId: 1, changes: 1 }),
+  getAllAsync: jest.fn().mockResolvedValue([]),
+  getFirstAsync: jest.fn().mockResolvedValue(null),
+});
+
+describe("getDb migrations", () => {
+  afterEach(() => {
+    jest.dontMock("expo-sqlite");
+    jest.resetModules();
+  });
+
+  it("silently swallows duplicate column errors during init", async () => {
+    const mockOpen = jest.fn().mockResolvedValue({
+      ...makeMockDb(),
+      execAsync: jest.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes("ADD COLUMN")) {
+          throw new Error("table tasks already has column status");
+        }
+      }),
     });
 
     // Should resolve without throwing
-    await expect(freshGetDb!()).resolves.toBeDefined();
+    await expect(loadFreshDb(mockOpen).getDb()).resolves.toBeDefined();
+    expect(mockOpen).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getDb initialization caching (concurrent callers + retry after failure)
+// ---------------------------------------------------------------------------
+describe("getDb initialization", () => {
+  afterEach(() => {
+    jest.dontMock("expo-sqlite");
+    jest.resetModules();
+  });
+
+  it("opens the database exactly once when getDb() is called concurrently", async () => {
+    // Several call sites (App init, loadTasks, settings effects, dashboard) all
+    // call getDb() on mount. Without the cached in-flight promise each would see
+    // _db === null and re-run open + CREATE TABLE + every migration in parallel.
+    const mockOpen = jest.fn().mockResolvedValue(makeMockDb());
+    const freshDb = loadFreshDb(mockOpen);
+
+    const [a, b, c] = await Promise.all([
+      freshDb.getDb(),
+      freshDb.getDb(),
+      freshDb.getDb(),
+    ]);
+
+    expect(mockOpen).toHaveBeenCalledTimes(1);
+    // All concurrent callers get the same instance.
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+  });
+
+  it("retries on a later call when the first initialization fails", async () => {
+    // A rejected init must not stay cached — otherwise every later getDb() call
+    // for the lifetime of the process reuses the same rejected promise and the
+    // app is permanently stuck with no database.
+    const mockFlakyOpen = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("disk I/O error"))
+      .mockResolvedValue(makeMockDb());
+    const freshDb = loadFreshDb(mockFlakyOpen);
+
+    await expect(freshDb.getDb()).rejects.toThrow("disk I/O error");
+
+    // The cache was cleared, so this call actually re-opens the database.
+    await expect(freshDb.getDb()).resolves.toBeDefined();
+    expect(mockFlakyOpen).toHaveBeenCalledTimes(2);
   });
 });
