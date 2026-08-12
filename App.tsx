@@ -448,11 +448,17 @@ export default function App() {
     // on a sideloaded release build that is an app stuck on an empty screen with
     // no way to recover. Always flip dbReady so the UI renders with defaults.
     init()
+      .then(() => {
+        // Arm the settings-persistence effects only once the saved values are
+        // actually in state. If init failed partway, the state still holds
+        // defaults and those effects would write them back over the user's
+        // stored settings.
+        isMountedRef.current = true;
+      })
       .catch((err: unknown) => {
         console.error("[App] initialization failed:", err);
       })
       .finally(() => {
-        isMountedRef.current = true;
         setDbReady(true);
       });
   }, [loadTasks]);
