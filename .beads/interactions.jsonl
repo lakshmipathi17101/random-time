@@ -28,3 +28,5 @@
 {"id":"int-a8e869ed","kind":"field_change","created_at":"2026-08-12T14:09:35.4881153Z","actor":"Claude Cowork","issue_id":"random-time-rlk.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-ade7b6ac","kind":"field_change","created_at":"2026-08-12T14:10:21.0486731Z","actor":"Claude Cowork","issue_id":"random-time-dj0.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-f7614f61","kind":"field_change","created_at":"2026-08-12T14:16:04.1751694Z","actor":"Claude Cowork","issue_id":"random-time-ckw.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-5e85dbb4","kind":"field_change","created_at":"2026-08-12T14:24:36.7111506Z","actor":"Claude Cowork","issue_id":"random-time-rlk.2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-bd8f7919","kind":"field_change","created_at":"2026-08-12T14:25:21.6103752Z","actor":"Claude Cowork","issue_id":"random-time-dj0.2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
