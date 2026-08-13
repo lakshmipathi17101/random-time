@@ -60,6 +60,33 @@ Exit 0 = smoke passed. Exit non-zero = stop; do not proceed to Build.
 
 ---
 
+## Deploy
+
+Standard deploy sequence for an unattended agent run (no physical device required):
+
+```bash
+# 1. Install JS dependencies
+npm install
+
+# 2. TypeScript check
+npx tsc --noEmit
+
+# 3. Unit test suite
+npx jest --passWithNoTests --forceExit
+
+# 4. Build release APK (standalone, no Metro required)
+cd android && ./gradlew assembleRelease --no-daemon && cd ..
+
+# 5. Verify output
+ls -lh android/app/build/outputs/apk/release/app-release.apk
+```
+
+Accept if all five steps exit 0 and the APK exists. The release APK is the
+deliverable — it embeds the JS bundle and works standalone on a device.
+Install on device is **[MANUAL]** — see the "Install on device" section below.
+
+---
+
 ## Build — Debug APK (arm64-v8a only, ~28 MB)
 
 ```bash
