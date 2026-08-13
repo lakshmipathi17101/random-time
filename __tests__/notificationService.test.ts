@@ -69,6 +69,8 @@ import {
   scheduleReminder,
   scheduleAlarm,
   cancelNotification,
+  parseNotificationIds,
+  cancelTaskNotifications,
   scheduleGentleNudge,
   fireOverlayAlarmNow,
   setupOverlayAlarmResponseHandler,
@@ -86,6 +88,7 @@ const mockAddListener = jest.mocked(
 );
 // Phase 12 — typed reference to the overlay bridge schedule mock
 const mockScheduleOverlayAlarm = jest.mocked(overlayAlarmBridge.scheduleOverlayAlarm);
+const mockCancelOverlay = jest.mocked(overlayAlarmBridge.cancelOverlayAlarm);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -104,6 +107,7 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof Notifications.addNotificationResponseReceivedListener>);
   // Default: bridge scheduleOverlayAlarm succeeds with 'overlay'
   mockScheduleOverlayAlarm.mockResolvedValue({ scheduled: "overlay" });
+  mockCancelOverlay.mockResolvedValue(undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -593,5 +597,125 @@ describe("scheduleAlarm — overlay bridge integration", () => {
 
     // scheduleAlarm must not throw; expo-notifications id is returned
     expect(id).toBe("notif-id-456");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseNotificationIds — the column can hold anything older builds wrote
+// ---------------------------------------------------------------------------
+describe("parseNotificationIds", () => {
+  it("returns an empty array for null", () => {
+    expect(parseNotificationIds(null)).toEqual([]);
+  });
+
+  it("returns an empty array for an empty string", () => {
+    expect(parseNotificationIds("")).toEqual([]);
+  });
+
+  it("returns an empty array for malformed JSON instead of throwing", () => {
+    expect(parseNotificationIds('["a", "b"')).toEqual([]);
+    expect(parseNotificationIds("not json at all")).toEqual([]);
+  });
+
+  it("returns an empty array for valid JSON that is not an array", () => {
+    expect(parseNotificationIds('{"id":"abc"}')).toEqual([]);
+    expect(parseNotificationIds('"just-a-string"')).toEqual([]);
+    expect(parseNotificationIds("42")).toEqual([]);
+    expect(parseNotificationIds("null")).toEqual([]);
+  });
+
+  it("keeps only the string elements of a mixed array", () => {
+    expect(
+      parseNotificationIds('["a", 1, null, "b", true, {"x":1}, "c"]')
+    ).toEqual(["a", "b", "c"]);
+  });
+
+  it("returns all ids for a well-formed array", () => {
+    expect(parseNotificationIds('["id-1","id-2","id-3"]')).toEqual([
+      "id-1",
+      "id-2",
+      "id-3",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cancelTaskNotifications — must never abort partway through
+// ---------------------------------------------------------------------------
+describe("cancelTaskNotifications", () => {
+  const task = {
+    id: 7,
+    alarm_notification_id: "alarm-1",
+    reminder_notification_id: "legacy-reminder-1",
+    reminder_notification_ids: '["rem-1","rem-2"]',
+  };
+
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it("cancels the alarm, the legacy reminder, every multi-offset reminder and the overlay alarm", async () => {
+    await cancelTaskNotifications(task);
+
+    expect(mockCancel).toHaveBeenCalledTimes(4);
+    expect(mockCancel).toHaveBeenCalledWith("alarm-1");
+    expect(mockCancel).toHaveBeenCalledWith("legacy-reminder-1");
+    expect(mockCancel).toHaveBeenCalledWith("rem-1");
+    expect(mockCancel).toHaveBeenCalledWith("rem-2");
+    expect(mockCancelOverlay).toHaveBeenCalledWith("7");
+  });
+
+  it("skips null ids and unparseable reminder id lists", async () => {
+    await cancelTaskNotifications({
+      id: 8,
+      alarm_notification_id: null,
+      reminder_notification_id: null,
+      reminder_notification_ids: "{oops",
+    });
+
+    expect(mockCancel).not.toHaveBeenCalled();
+    // The overlay alarm is still torn down.
+    expect(mockCancelOverlay).toHaveBeenCalledWith("8");
+  });
+
+  it("still cancels the remaining notifications when one cancel rejects", async () => {
+    // Cancelling an ID the OS already cleared rejects on some Android versions.
+    // An unguarded throw here would abandon the rest of the loop and leave the
+    // task's other notifications armed.
+    mockCancel.mockRejectedValueOnce(new Error("invalid notification id"));
+
+    await expect(cancelTaskNotifications(task)).resolves.toBeUndefined();
+
+    expect(mockCancel).toHaveBeenCalledTimes(4);
+    expect(mockCancel).toHaveBeenCalledWith("legacy-reminder-1");
+    expect(mockCancel).toHaveBeenCalledWith("rem-1");
+    expect(mockCancel).toHaveBeenCalledWith("rem-2");
+    // Overlay teardown must still run after a failed notification cancel.
+    expect(mockCancelOverlay).toHaveBeenCalledWith("7");
+  });
+
+  it("still tears down the overlay alarm when every notification cancel rejects", async () => {
+    mockCancel.mockRejectedValue(new Error("invalid notification id"));
+
+    await expect(cancelTaskNotifications(task)).resolves.toBeUndefined();
+
+    expect(mockCancel).toHaveBeenCalledTimes(4);
+    expect(mockCancelOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not throw when cancelOverlayAlarm itself rejects", async () => {
+    mockCancelOverlay.mockRejectedValueOnce(new Error("native bridge gone"));
+
+    // Callers delete the task row right after this — a throw would strand it.
+    await expect(cancelTaskNotifications(task)).resolves.toBeUndefined();
+
+    expect(mockCancel).toHaveBeenCalledTimes(4);
+    expect(warnSpy).toHaveBeenCalled();
   });
 });

@@ -23,7 +23,7 @@ import {
   requestNotificationPermission,
   scheduleReminder,
   scheduleAlarm,
-  cancelNotification,
+  cancelTaskNotifications,
 } from "./notificationService";
 import { insertTask, updateTask, Task, TaskCategory, TaskPriority } from "./db";
 import * as Haptics from "expo-haptics";
@@ -136,23 +136,23 @@ export default function AddEventModal({
 
       const notifGranted = await requestNotificationPermission();
       let alarmId: string | null = null;
+      let alarmFailed = false;
       const reminderIds: string[] = [];
 
       if (editTask) {
-        // Edit mode: cancel all old notifications
-        if (editTask.alarm_notification_id) await cancelNotification(editTask.alarm_notification_id);
-        if (editTask.reminder_notification_id) await cancelNotification(editTask.reminder_notification_id);
-        if (editTask.reminder_notification_ids) {
-          const oldIds: string[] = JSON.parse(editTask.reminder_notification_ids);
-          for (const id of oldIds) await cancelNotification(id);
-        }
+        // Edit mode: cancel all old notifications (including the native
+        // overlay alarm, which nothing used to tear down).
+        await cancelTaskNotifications(editTask);
 
         if (notifGranted) {
           for (const mins of effectiveReminderMins) {
             const id = await scheduleReminder(name, eventDate, mins);
             if (id) reminderIds.push(id);
           }
-          alarmId = await scheduleAlarm(name, eventDate);
+          // Passing the task id is required: it carries taskId in the
+          // notification payload (without it the tray's Done / Postpone /
+          // Re-roll buttons do nothing) and keys the native overlay alarm.
+          alarmId = await scheduleAlarm(name, eventDate, editTask.id);
         }
 
         await updateTask(editTask.id, {
@@ -182,14 +182,18 @@ export default function AddEventModal({
             const id = await scheduleReminder(name, eventDate, mins);
             if (id) reminderIds.push(id);
           }
-          alarmId = await scheduleAlarm(name, eventDate);
         }
 
-        await insertTask({
+        // Insert BEFORE scheduling the alarm so it can be keyed to a real task
+        // id. The alarm used to be scheduled with no id at all, which meant
+        // every task created through this (primary) flow got a notification
+        // whose Done / Postpone / Re-roll buttons were inert, and never
+        // registered a native overlay alarm.
+        const newTaskId = await insertTask({
           title: name,
           event_date: eventDate.toISOString(),
           reminder_minutes: effectiveReminderMins[0] ?? 10,
-          alarm_notification_id: alarmId,
+          alarm_notification_id: null,
           reminder_notification_id: reminderIds[0] ?? null,
           reminder_notification_ids: JSON.stringify(reminderIds),
           calendar_event_id: calendarEventId,
@@ -197,12 +201,47 @@ export default function AddEventModal({
           category,
           priority,
         });
+
+        if (notifGranted) {
+          // The task row and calendar event are already persisted at this
+          // point, so a throw from here must NOT surface as a total failure:
+          // the user would retry and create a duplicate task. Degrade to
+          // "saved, but without an alarm" instead.
+          try {
+            alarmId = await scheduleAlarm(name, eventDate, newTaskId);
+            if (alarmId) {
+              await updateTask(newTaskId, {
+                title: name,
+                event_date: eventDate.toISOString(),
+                reminder_minutes: effectiveReminderMins[0] ?? 10,
+                notes: notes.trim() || null,
+                alarm_notification_id: alarmId,
+                reminder_notification_id: reminderIds[0] ?? null,
+                reminder_notification_ids: JSON.stringify(reminderIds),
+                category,
+                priority,
+              });
+            }
+          } catch (alarmErr: unknown) {
+            console.warn(
+              "[AddEventModal] alarm scheduling failed after task was saved:",
+              alarmErr
+            );
+            alarmId = null;
+            alarmFailed = true;
+          }
+        }
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onTaskSaved();
 
-      if (!notifGranted) {
+      if (alarmFailed) {
+        Alert.alert(
+          "Saved without alarm",
+          "Your task was saved, but the alarm couldn't be scheduled. Edit the task to try setting the alarm again."
+        );
+      } else if (!notifGranted) {
         Alert.alert(
           editTask ? "Task updated" : "Event created",
           "Saved. Notification permission was denied — no reminders will fire."

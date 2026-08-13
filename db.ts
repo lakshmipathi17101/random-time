@@ -45,15 +45,43 @@ export type SettingKey =
   | "overlay_gate_dismissed";
 
 let _db: SQLite.SQLiteDatabase | null = null;
+/**
+ * In-flight initialization promise.
+ *
+ * `getDb()` is called from several places that all fire on mount (App init,
+ * loadTasks, the settings-persistence effects, ProgressDashboard). Without
+ * this cache each concurrent caller would see `_db === null` — because the
+ * assignment only happens *after* the first `await` — and would open the
+ * database and re-run CREATE TABLE + every migration in parallel. Caching the
+ * promise makes initialization run exactly once.
+ */
+let _dbInit: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export async function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (_db) return _db;
+  if (!_dbInit) {
+    _dbInit = openAndMigrate().then(
+      (db) => {
+        _db = db;
+        return db;
+      },
+      (err: unknown) => {
+        // Clear the cache so a later call can retry instead of being stuck
+        // with a permanently rejected promise.
+        _dbInit = null;
+        throw err;
+      }
+    );
+  }
+  return _dbInit;
+}
 
-  _db = await SQLite.openDatabaseAsync("randomtime.db");
+async function openAndMigrate(): Promise<SQLite.SQLiteDatabase> {
+  const db = await SQLite.openDatabaseAsync("randomtime.db");
 
-  await _db.execAsync(`PRAGMA journal_mode = WAL;`);
+  await db.execAsync(`PRAGMA journal_mode = WAL;`);
 
-  await _db.execAsync(`
+  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS tasks (
       id                       INTEGER PRIMARY KEY AUTOINCREMENT,
       title                    TEXT    NOT NULL,
@@ -89,13 +117,13 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
   ];
   for (const sql of migrations) {
     try {
-      await _db.execAsync(sql);
+      await db.execAsync(sql);
     } catch {
       // Column already exists — safe to ignore
     }
   }
 
-  return _db;
+  return db;
 }
 
 export async function insertTask(
@@ -275,7 +303,11 @@ export async function getCompletions(
 export async function purgeOldCompletions(): Promise<void> {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 365);
-  const cutoffStr = cutoff.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+  // Completion `date` values are written as LOCAL 'YYYY-MM-DD' (see
+  // ProgressDashboard's toDateStr), so the cutoff must be built the same way.
+  // `toISOString()` would yield the UTC day and mis-compare either side of
+  // midnight for any non-UTC timezone.
+  const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
   const db = await getDb();
   await db.runAsync(
     `DELETE FROM task_completions WHERE date < ?`,

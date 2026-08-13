@@ -97,8 +97,18 @@ beforeEach(() => {
 // Helper
 // ---------------------------------------------------------------------------
 
+/**
+ * Day key `n` days from today, in the same LOCAL 'YYYY-MM-DD' form that
+ * ProgressDashboard's toDateStr writes into task_completions.date and that
+ * purgeOldCompletions builds its cutoff with. Using toISOString() here would
+ * produce the UTC day, which disagrees with both in any non-UTC timezone.
+ */
 function daysOffset(n: number): string {
-  return new Date(Date.now() + n * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
 // ---------------------------------------------------------------------------

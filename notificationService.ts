@@ -213,7 +213,73 @@ export async function scheduleGentleNudge(
 }
 
 export async function cancelNotification(id: string): Promise<void> {
-  await Notifications.cancelScheduledNotificationAsync(id);
+  try {
+    await Notifications.cancelScheduledNotificationAsync(id);
+  } catch (err) {
+    // Cancelling an ID that has already fired / been cleared by the OS rejects
+    // on some Android versions. Callers cancel in a loop before deleting a
+    // task, so a throw here would abort the loop and leave the task row (and
+    // its remaining notifications) behind. Nothing to recover — log and move on.
+    console.warn(`[notificationService] cancelNotification(${id}) failed:`, err);
+  }
+}
+
+/**
+ * Parse a `reminder_notification_ids` column value into a string array.
+ *
+ * The column holds a JSON array, but rows written by older builds (or a
+ * partially-failed write) can contain malformed or non-array JSON. An
+ * unguarded `JSON.parse` here would throw inside the delete/reschedule loops
+ * and strand the task, so anything unparseable degrades to an empty list.
+ */
+export function parseNotificationIds(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Cancel every notification associated with a task: the alarm, the legacy
+ * single reminder, all multi-offset reminders, and the native AlarmManager
+ * overlay alarm.
+ *
+ * Callers previously open-coded this in six places and none of them cancelled
+ * the overlay alarm — so after deleting a task the native full-screen alarm
+ * still fired at the original time for a task that no longer existed.
+ *
+ * Never throws: each cancel is individually guarded so one bad ID cannot
+ * prevent the remaining notifications (or the caller's delete) from happening.
+ */
+export async function cancelTaskNotifications(task: {
+  id: number;
+  alarm_notification_id: string | null;
+  reminder_notification_id: string | null;
+  reminder_notification_ids: string | null;
+}): Promise<void> {
+  if (task.alarm_notification_id) {
+    await cancelNotification(task.alarm_notification_id);
+  }
+  if (task.reminder_notification_id) {
+    await cancelNotification(task.reminder_notification_id);
+  }
+  for (const id of parseNotificationIds(task.reminder_notification_ids)) {
+    await cancelNotification(id);
+  }
+
+  // Phase 12 — tear down the AlarmManager overlay alarm keyed by this task id.
+  try {
+    await overlayAlarmBridge.cancelOverlayAlarm(String(task.id));
+  } catch (err) {
+    console.warn(
+      `[notificationService] cancelOverlayAlarm(${task.id}) failed:`,
+      err
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -231,8 +297,15 @@ export async function fireOverlayAlarmNow(
   taskId: string,
   title: string
 ): Promise<void> {
-  const result = await overlayAlarmBridge.fireOverlayAlarm(taskId, title);
-  console.log(`[notificationService] fireOverlayAlarmNow → ${result.fired}`);
+  try {
+    const result = await overlayAlarmBridge.fireOverlayAlarm(taskId, title);
+    console.log(`[notificationService] fireOverlayAlarmNow → ${result.fired}`);
+  } catch (err) {
+    // The bridge re-throws native errors other than ERR_OVERLAY_NOT_GRANTED,
+    // which contradicts this function's documented no-op contract and would
+    // surface as an unhandled rejection at the (fire-and-forget) call sites.
+    console.warn("[notificationService] fireOverlayAlarmNow failed:", err);
+  }
 }
 
 export interface OverlayAlarmResponseHandlers {
