@@ -58,6 +58,8 @@ import {
 } from "./utils/duration";
 import { useAppControl } from "./hooks/useAppControl";
 import ProgressDashboard from "./ProgressDashboard";
+import Onboarding from "./Onboarding";
+import { shouldShowOnboarding } from "./utils/onboarding";
 
 // ─── Theme context ────────────────────────────────────────────────────────────
 const ThemeContext = createContext<AppTheme>(DARK);
@@ -363,6 +365,9 @@ export default function App() {
   // Phase 13 — Tab navigation
   const [activeTab, setActiveTab] = useState<'Home' | 'Progress'>('Home');
 
+  // Phase 14 — onboarding gate. null = not yet resolved (still loading).
+  const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
+
   const isMountedRef = useRef(false);
 
   // Tick every second so the Next Nudge countdown stays fresh.
@@ -403,6 +408,9 @@ export default function App() {
       const savedDurationMax = await getSetting("duration_max_minutes");
       // Phase 12 — overlay permission gate dismissed flag
       const savedOverlayGateDismissed = await getSetting("overlay_gate_dismissed");
+      // Phase 14 — onboarding gate
+      const savedOnboarded = await getSetting("onboarded");
+      setShowOnboarding(shouldShowOnboarding(savedOnboarded));
 
       if (saved24h !== null) setIs24h(saved24h === "true");
       if (savedMinH !== null) setMinH(savedMinH);
@@ -1061,6 +1069,10 @@ export default function App() {
         <SafeAreaView style={s.container}>
           <StatusBar style={isDark ? "light" : "dark"} />
 
+          {showOnboarding === null || !dbReady ? null : showOnboarding ? (
+            <Onboarding theme={theme} onDone={() => setShowOnboarding(false)} />
+          ) : (
+          <>
           {/* Tab Content */}
           {activeTab === 'Home' ? (
             <KeyboardAvoidingView
@@ -1671,6 +1683,8 @@ export default function App() {
               </Text>
             </TouchableOpacity>
           </View>
+          </>
+          )}
         </SafeAreaView>
       </SafeAreaProvider>
     </ThemeContext.Provider>
