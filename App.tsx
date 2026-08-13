@@ -38,7 +38,9 @@ import {
   scheduleAlarm,
   scheduleGentleNudge,
   setupOverlayAlarmResponseHandler,
+  setBadgeCount,
 } from "./notificationService";
+import { computeBadgeCount } from "./utils/badge";
 import { DARK, LIGHT, AppTheme } from "./theme";
 import {
   generateWeightedRandom,
@@ -381,6 +383,12 @@ export default function App() {
     setTasks(fetched);
   }, []);
 
+  // Phase 14 — app icon badge. Fire-and-forget: never awaited in render.
+  const refreshBadge = useCallback((tasksList: Task[]) => {
+    const count = computeBadgeCount(tasksList);
+    void setBadgeCount(count);
+  }, []);
+
   // Initialize DB and load persisted settings
   useEffect(() => {
     const init = async () => {
@@ -444,6 +452,16 @@ export default function App() {
     init();
   }, [loadTasks]);
 
+  // Phase 14 — refresh the app icon badge on mount (after dbReady) and after
+  // every tasks mutation (create / edit / mark-done / delete / bulk action),
+  // since all of those funnel through loadTasks() and update `tasks`.
+  // Skipped while the onboarding gate is still showing.
+  useEffect(() => {
+    if (!dbReady) return;
+    if (showOnboarding !== false) return;
+    refreshBadge(tasks);
+  }, [tasks, dbReady, showOnboarding, refreshBadge]);
+
   // Notification action handlers (Done / Postpone / Re-roll from tray)
   useEffect(() => {
     const minTotalFn = () =>
@@ -489,12 +507,14 @@ export default function App() {
       }
       await updateTaskTime(task.id, newDate.toISOString(), alarmId, reminderId);
       await loadTasks();
+      if (showOnboarding === false) refreshBadge(await getTasks());
     };
 
     const cleanupNotif = setupNotificationResponseHandler({
       onDone: async (taskId) => {
         await updateTaskStatus(taskId, "done");
         await loadTasks();
+        if (showOnboarding === false) refreshBadge(await getTasks());
       },
       onPostpone: (taskId) => {
         void rescheduleTask(taskId, false);
@@ -512,6 +532,7 @@ export default function App() {
         if (!isNaN(numId)) {
           await updateTaskStatus(numId, "done");
           await loadTasks();
+          if (showOnboarding === false) refreshBadge(await getTasks());
         }
       },
       onPostpone: (taskId) => {
@@ -533,6 +554,7 @@ export default function App() {
     minH, minM, minS, maxH, maxM, maxS,
     workHoursBias, skipLunch, skipSleep,
     preNudgeEnabled,
+    showOnboarding, refreshBadge,
   ]);
 
   // Persist settings
